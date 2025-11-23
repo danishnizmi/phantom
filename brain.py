@@ -208,7 +208,7 @@ class AgentBrain:
             strategy["video_prompt"] = visual_prompt
             
         else:
-            # Generate Thread with News Research
+            # Generate Single Tweet with News Research
             logger.info(f"Researching news about: {topic}")
             
             # Step 1: Research real news about the topic
@@ -231,50 +231,49 @@ class AgentBrain:
                 logger.warning(f"News research failed: {e}")
                 news_info = f"Recent developments in {topic}"
             
-            # Step 2: Generate authentic thread based on real news
-            thread_prompt = f"""You're a tech professional sharing news on Twitter/X. Write a 3-tweet thread.
+            # Step 2: Generate single authentic tweet based on real news
+            tweet_prompt = f"""You're a tech professional sharing news on Twitter/X. Write ONE tweet (not a thread).
 
 NEWS RESEARCH:
 {news_info}
 
 STYLE GUIDE (CRITICAL - this must sound human, not bot):
 ✓ Write like you're texting a tech friend, not selling a product
-✓ First tweet: Share the news + cite source in parentheses
-✓ Second tweet: Your genuine take or why it matters  
-✓ Third tweet: Specific implication, question, or prediction
-✓ Conversational tone - use "I think", "Honestly", "Curious if"
-✓ Max 1-2 total hashtags (not per tweet)
+✓ Include: news + source + your brief take, all in one tweet
+✓ Conversational tone - use "I think", "Honestly", "Looks like"
+✓ Max 1-2 hashtags total
 ✓ Only use emoji if it genuinely adds value (0-1 total)
 ✓ NO marketing words: "game-changer", "revolutionary", "unlock", "dive deep"
 ✓ NO excessive punctuation (!!!) or hype
-✗ Sound like actual insight, not a press release
+✓ Sound like actual insight, not a press release
+✓ Under 270 characters
 
-FORMAT: Separate tweets with |||
-Each tweet: under 260 characters
+EXAMPLES (tone we want):
 
-EXAMPLE (tone we want):
-"Anthropic just released Claude 3.5 Sonnet with updated training data through April 2024. Also added artifact creation. (via Anthropic blog)
-|||
-Honestly the artifact feature is clever - generates working apps/docs you can iterate on. Could change how people prototype with LLMs.
-|||
-Curious if this pushes OpenAI to update GPT-4's cutoff date sooner. Anyone tested the new vision capabilities vs GPT-4V?"
+"Anthropic just released Claude 3.5 Sonnet with updated training through April 2024. The artifact feature is clever - generates working apps you can iterate on. (via Anthropic)"
 
-Now write about: {topic}"""
+"OpenAI's GPT-4 Turbo dropped to $0.01/1K tokens. Honestly huge for anyone building AI features - makes a lot more use cases viable now."
+
+"Vercel acquired v0.dev team. Makes sense given how much traction AI code gen is getting. Curious how they'll integrate it with their platform."
+
+Now write ONE tweet about: {topic}"""
             
             try:
-                response = self._generate_with_fallback(thread_prompt)
-                tweets = response.split("|||")
-                cleaned_tweets = [t.strip() for t in tweets if t.strip()]
-                if not cleaned_tweets:
-                    # Create unique fallback using timestamp and randomization to avoid duplicate content errors
+                response = self._generate_with_fallback(tweet_prompt)
+                tweet = response.strip()
+                
+                if not tweet or len(tweet) < 20:
+                    # Create unique fallback using timestamp
                     import random
-                    emojis = ["🚀", "💡", "🔥", "✨", "⚡"]
                     timestamp_str = datetime.datetime.now().strftime("%H%M")
-                    cleaned_tweets = [f"{random.choice(emojis)} Diving into {topic} today! Stay tuned... #{timestamp_str} #tech"]
-                strategy["content"] = cleaned_tweets
+                    tweet = f"Interesting developments in {topic}. Worth keeping an eye on. #{timestamp_str}"
+                
+                # Return as single-item list for consistency with thread format
+                strategy["content"] = [tweet]
             except Exception as e:
-                logger.error(f"Failed to generate thread: {e}")
+                logger.error(f"Failed to generate tweet: {e}")
                 raise # Fail instead of using fallback
+
 
 
         return strategy
