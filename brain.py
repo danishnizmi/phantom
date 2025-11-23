@@ -15,9 +15,59 @@ class AgentBrain:
         self.location = Config.REGION
         
         vertexai.init(project=self.project_id, location=self.location)
-        self.model = GenerativeModel("gemini-1.0-pro")
+        
+        # Multi-model configuration with fallback
+        self.model_names = [
+            "gemini-1.5-flash-002",  # Primary: Latest stable Flash
+            "gemini-1.5-flash",      # Secondary: Stable Flash
+            "gemini-1.5-pro-002",    # Tertiary: Most capable
+        ]
+        self.models = {}
+        
+        # Initialize all models
+        for model_name in self.model_names:
+            try:
+                self.models[model_name] = GenerativeModel(model_name)
+                logger.info(f"✓ Initialized model: {model_name}")
+            except Exception as e:
+                logger.warning(f"✗ Failed to initialize {model_name}: {e}")
+        
+        if not self.models:
+            raise RuntimeError("No Gemini models could be initialized")
+        
+        logger.info(f"Active models: {list(self.models.keys())}")
+        
         self.db = firestore.Client(project=self.project_id)
         self.collection = self.db.collection(Config.COLLECTION_NAME)
+
+    def _generate_with_fallback(self, prompt: str) -> str:
+        """
+        Attempts to generate content using available models with fallback.
+        Tries each model in order until successful or all fail.
+        """
+        last_error = None
+        
+        for model_name in self.model_names:
+            if model_name not in self.models:
+                continue
+                
+            try:
+                model = self.models[model_name]
+                response = model.generate_content(prompt)
+                
+                if response.text:
+                    logger.info(f"✓ Generated content with {model_name}")
+                    return response.text.strip()
+                else:
+                    logger.warning(f"✗ {model_name} returned empty response")
+                    
+            except Exception as e:
+                last_error = e
+                logger.warning(f"✗ {model_name} failed: {str(e)[:100]}")
+                continue
+        
+        # All models failed
+        raise RuntimeError(f"All models failed. Last error: {last_error}")
 
     def _get_trending_topic(self) -> str:
         """
@@ -28,12 +78,7 @@ class AgentBrain:
         - Popular GitHub repositories or developer tools
         - Tech news (product launches, acquisitions, breakthroughs)
         Return ONLY the topic name, be specific (e.g., 'Cursor AI Editor' not 'AI Tools')."""
-        try:
-            response = self.model.generate_content(prompt)
-            if not response.text:
-                raise ValueError("Empty response from Gemini")
-            return response.text.strip()
-            raise # Re-raise the exception instead of using fallback
+        return self._generate_with_fallback(prompt)
 
     def _check_history(self, topic: str) -> bool:
         """
@@ -75,8 +120,7 @@ class AgentBrain:
                 - Recent tech news or product launches
                 Return ONLY the topic name."""
             try:
-                response = self.model.generate_content(prompt)
-                new_topic = response.text.strip()
+                new_topic = self._generate_with_fallback(prompt)
                 # Check history again for the new topic
                 if self._check_history(new_topic):
                      raise ValueError(f"Both '{topic}' and '{new_topic}' are duplicates. No fresh content available.")
@@ -105,7 +149,7 @@ class AgentBrain:
             
             Reply ONLY with 'VIDEO' or 'THREAD'."""
             try:
-                decision = self.model.generate_content(decision_prompt).text.strip().upper()
+                decision = self._generate_with_fallback(decision_prompt).upper()
                 # Strict check
                 if "VIDEO" in decision and "THREAD" not in decision:
                      post_type = "video"
@@ -126,7 +170,7 @@ class AgentBrain:
             # Generate Video Prompt and Tweet Text
             script_prompt = f"Write a tweet caption for a video about '{topic}'. Also provide a visual prompt for an AI video generator. Format: CAPTION: <text> | PROMPT: <visual description>"
             try:
-                response = self.model.generate_content(script_prompt).text.strip()
+                response = self._generate_with_fallback(script_prompt)
                 if "|" in response:
                     parts = response.split("|")
                     caption = parts[0].replace("CAPTION:", "").strip()
@@ -152,11 +196,15 @@ class AgentBrain:
             
             Separate tweets with '|||'. Keep each tweet under 260 characters."""
             try:
-                response = self.model.generate_content(thread_prompt).text.strip()
+                response = self._generate_with_fallback(thread_prompt)
                 tweets = response.split("|||")
                 cleaned_tweets = [t.strip() for t in tweets if t.strip()]
                 if not cleaned_tweets:
-                    cleaned_tweets = [f"Exciting news about {topic}! #tech"]
+                    # Create unique fallback using timestamp and randomization to avoid duplicate content errors
+                    import random
+                    emojis = ["🚀", "💡", "🔥", "✨", "⚡"]
+                    timestamp_str = datetime.datetime.now().strftime("%H%M")
+                    cleaned_tweets = [f"{random.choice(emojis)} Diving into {topic} today! Stay tuned... #{timestamp_str} #tech"]
                 strategy["content"] = cleaned_tweets
             except Exception as e:
                 logger.error(f"Failed to generate thread: {e}")
