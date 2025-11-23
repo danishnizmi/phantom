@@ -1,0 +1,35 @@
+steps:
+  # 1. Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/$_IMAGE_NAME:$COMMIT_SHA', '.']
+    id: 'Build'
+
+  # 2. Push the container image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/$_IMAGE_NAME:$COMMIT_SHA']
+    id: 'Push'
+
+  # 3. Update Cloud Run Job
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'jobs'
+      - 'update'
+      - '$_JOB_NAME'
+      - '--image'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/$_IMAGE_NAME:$COMMIT_SHA'
+      - '--region'
+      - '$_REGION'
+      - '--set-env-vars'
+      - 'PROJECT_ID=$PROJECT_ID,REGION=$_REGION,BUDGET_MODE=False'
+    id: 'Deploy'
+
+substitutions:
+  _REGION: us-central1
+  _REPO_NAME: tech-influencer-repo
+  _IMAGE_NAME: tech-influencer-agent
+  _JOB_NAME: tech-influencer-job
+
+options:
+  logging: CLOUD_LOGGING_ONLY

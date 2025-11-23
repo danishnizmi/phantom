@@ -1,0 +1,5 @@
+google-cloud-aiplatform
+google-cloud-firestore
+google-cloud-secret-manager
+tweepy
+requests
