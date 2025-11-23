@@ -9,6 +9,17 @@ SERVICE_ACCOUNT_EMAIL="$SERVICE_ACCOUNT_NAME@$PROJECT_ID.iam.gserviceaccount.com
 
 echo "Setting up resources for Project: $PROJECT_ID"
 
+# 0. Enable Required APIs
+echo "Enabling required APIs..."
+gcloud services enable \
+    run.googleapis.com \
+    artifactregistry.googleapis.com \
+    cloudbuild.googleapis.com \
+    secretmanager.googleapis.com \
+    aiplatform.googleapis.com \
+    firestore.googleapis.com \
+    cloudscheduler.googleapis.com
+
 # 1. Create Service Account
 if ! gcloud iam service-accounts describe $SERVICE_ACCOUNT_EMAIL > /dev/null 2>&1; then
     echo "Creating Service Account: $SERVICE_ACCOUNT_NAME"
@@ -23,22 +34,26 @@ echo "Granting permissions..."
 # Cloud Run Invoker (for Scheduler)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
     --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
-    --role="roles/run.invoker"
+    --role="roles/run.invoker" \
+    --condition=None
 
 # Secret Manager Access (for Agent)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
     --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
-    --role="roles/secretmanager.secretAccessor"
+    --role="roles/secretmanager.secretAccessor" \
+    --condition=None
 
 # Vertex AI User (for Agent)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
     --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
-    --role="roles/aiplatform.user"
+    --role="roles/aiplatform.user" \
+    --condition=None
 
 # Firestore User (for Agent)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
     --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
-    --role="roles/datastore.user"
+    --role="roles/datastore.user" \
+    --condition=None
 
 # 3. Create Secrets (Placeholders)
 SECRETS=("TWITTER_CONSUMER_KEY" "TWITTER_CONSUMER_SECRET" "TWITTER_ACCESS_TOKEN" "TWITTER_ACCESS_TOKEN_SECRET")
