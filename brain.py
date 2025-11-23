@@ -33,9 +33,7 @@ class AgentBrain:
             if not response.text:
                 raise ValueError("Empty response from Gemini")
             return response.text.strip()
-        except Exception as e:
-            logger.error(f"Failed to get trending topic: {e}")
-            return "Latest GitHub Trending Repos" # Safe fallback
+            raise # Re-raise the exception instead of using fallback
 
     def _check_history(self, topic: str) -> bool:
         """
@@ -81,11 +79,12 @@ class AgentBrain:
                 new_topic = response.text.strip()
                 # Check history again for the new topic
                 if self._check_history(new_topic):
-                     topic = "Top GitHub Repos This Week" # Ultimate fallback
+                     raise ValueError(f"Both '{topic}' and '{new_topic}' are duplicates. No fresh content available.")
                 else:
                      topic = new_topic
-            except Exception:
-                topic = "Top GitHub Repos This Week" # Fallback
+            except Exception as e:
+                logger.error(f"Failed to find alternative topic: {e}")
+                raise # Fail instead of using fallback
         
         logger.info(f"Selected Topic: {topic}")
 
@@ -138,9 +137,7 @@ class AgentBrain:
                     visual_prompt = f"Tech visualization of {topic}"
             except Exception as e:
                 logger.error(f"Failed to generate video script: {e}")
-                # Fallback
-                caption = f"Check out this update on {topic}! #tech #ai"
-                visual_prompt = f"Futuristic technology visualization of {topic}, cinematic lighting, 4k"
+                raise # Fail instead of using fallback
             
             strategy["content"] = caption
             strategy["video_prompt"] = visual_prompt
@@ -163,7 +160,7 @@ class AgentBrain:
                 strategy["content"] = cleaned_tweets
             except Exception as e:
                 logger.error(f"Failed to generate thread: {e}")
-                strategy["content"] = [f"Exciting news about {topic}! Stay tuned for more updates. #tech"]
+                raise # Fail instead of using fallback
 
         return strategy
 
