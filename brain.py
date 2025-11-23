@@ -26,6 +26,8 @@ class AgentBrain:
         prompt = "Identify a single, specific, currently trending technology topic or news item suitable for a tech influencer tweet. Return ONLY the topic name."
         try:
             response = self.model.generate_content(prompt)
+            if not response.text:
+                raise ValueError("Empty response from Gemini")
             return response.text.strip()
         except Exception as e:
             logger.error(f"Failed to get trending topic: {e}")
@@ -36,15 +38,25 @@ class AgentBrain:
         Checks Firestore to see if we've recently posted about this topic.
         Returns True if we should SKIP this topic (duplicate), False otherwise.
         """
-        # Check last 20 posts
-        docs = self.collection.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(20).stream()
-        
-        for doc in docs:
-            data = doc.to_dict()
-            if data.get("topic", "").lower() == topic.lower():
-                logger.info(f"Topic '{topic}' was recently covered. Skipping.")
-                return True
-        return False
+        try:
+            # Check last 20 posts
+            # Note: Requires composite index if using multiple fields, but here we just order by timestamp.
+            # If collection is empty, this returns empty generator, which is fine.
+            docs = self.collection.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(20).stream()
+            
+            for doc in docs:
+                data = doc.to_dict()
+                # Improved matching: Check containment or exact match
+                stored_topic = data.get("topic", "").lower()
+                current_topic = topic.lower()
+                
+                if stored_topic == current_topic or current_topic in stored_topic or stored_topic in current_topic:
+                    logger.info(f"Topic '{topic}' matches recent post '{stored_topic}'. Skipping.")
+                    return True
+            return False
+        except Exception as e:
+            logger.warning(f"Firestore history check failed: {e}. Proceeding without check.")
+            return False
 
     def get_strategy(self):
         """
@@ -53,15 +65,20 @@ class AgentBrain:
         """
         topic = self._get_trending_topic()
         
+        # Retry logic for duplicates
         if self._check_history(topic):
-            # If duplicate, try to find a sub-niche or different angle
             logger.info("Duplicate topic detected. Requesting alternative.")
             prompt = f"The topic '{topic}' was already covered. Give me a DIFFERENT trending tech topic. Return ONLY the topic name."
             try:
                 response = self.model.generate_content(prompt)
-                topic = response.text.strip()
+                new_topic = response.text.strip()
+                # Check history again for the new topic
+                if self._check_history(new_topic):
+                     topic = "Python Coding Tips" # Ultimate fallback
+                else:
+                     topic = new_topic
             except Exception:
-                topic = "Coding Best Practices" # Fallback
+                topic = "Python Coding Tips" # Fallback
         
         logger.info(f"Selected Topic: {topic}")
 
@@ -73,14 +90,20 @@ class AgentBrain:
             decision_prompt = f"For the tech topic '{topic}', is it better to make a short video or a text thread? Reply with 'VIDEO' or 'THREAD'."
             try:
                 decision = self.model.generate_content(decision_prompt).text.strip().upper()
-                post_type = "video" if "VIDEO" in decision else "thread"
+                # Strict check
+                if "VIDEO" in decision and "THREAD" not in decision:
+                     post_type = "video"
+                elif "VIDEO" in decision:
+                     post_type = "video" # Lean towards video if mentioned
+                else:
+                     post_type = "thread"
             except Exception:
                 post_type = "thread" # Default to thread on error
 
         strategy = {
             "topic": topic,
             "type": post_type,
-            "timestamp": datetime.datetime.utcnow()
+            "timestamp": firestore.SERVER_TIMESTAMP # Use server timestamp
         }
 
         if post_type == "video":
@@ -88,9 +111,14 @@ class AgentBrain:
             script_prompt = f"Write a tweet caption for a video about '{topic}'. Also provide a visual prompt for an AI video generator. Format: CAPTION: <text> | PROMPT: <visual description>"
             try:
                 response = self.model.generate_content(script_prompt).text.strip()
-                parts = response.split("|")
-                caption = parts[0].replace("CAPTION:", "").strip()
-                visual_prompt = parts[1].replace("PROMPT:", "").strip()
+                if "|" in response:
+                    parts = response.split("|")
+                    caption = parts[0].replace("CAPTION:", "").strip()
+                    visual_prompt = parts[1].replace("PROMPT:", "").strip()
+                else:
+                    # Fallback parsing
+                    caption = response[:100]
+                    visual_prompt = f"Tech visualization of {topic}"
             except Exception as e:
                 logger.error(f"Failed to generate video script: {e}")
                 # Fallback
@@ -106,7 +134,10 @@ class AgentBrain:
             try:
                 response = self.model.generate_content(thread_prompt).text.strip()
                 tweets = response.split("|||")
-                strategy["content"] = [t.strip() for t in tweets if t.strip()]
+                cleaned_tweets = [t.strip() for t in tweets if t.strip()]
+                if not cleaned_tweets:
+                    cleaned_tweets = [f"Exciting news about {topic}! #tech"]
+                strategy["content"] = cleaned_tweets
             except Exception as e:
                 logger.error(f"Failed to generate thread: {e}")
                 strategy["content"] = [f"Exciting news about {topic}! Stay tuned for more updates. #tech"]
@@ -121,6 +152,9 @@ class AgentBrain:
             data["success"] = success
             if error:
                 data["error"] = error
+            # Ensure timestamp is set if it was missing (e.g. if strategy was created manually)
+            if "timestamp" not in data:
+                data["timestamp"] = firestore.SERVER_TIMESTAMP
             doc_ref.set(data)
         except Exception as e:
             logger.error(f"Failed to log post to Firestore: {e}")

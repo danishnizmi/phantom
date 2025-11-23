@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 import tweepy
 from config import Config, get_secret
@@ -31,42 +32,52 @@ def get_twitter_api():
         secrets["TWITTER_ACCESS_TOKEN"],
         secrets["TWITTER_ACCESS_TOKEN_SECRET"]
     )
-    return tweepy.API(auth), tweepy.Client(
+    
+    # Create clients
+    api_v1 = tweepy.API(auth)
+    client_v2 = tweepy.Client(
         consumer_key=secrets["TWITTER_CONSUMER_KEY"],
         consumer_secret=secrets["TWITTER_CONSUMER_SECRET"],
         access_token=secrets["TWITTER_ACCESS_TOKEN"],
         access_token_secret=secrets["TWITTER_ACCESS_TOKEN_SECRET"]
     )
+    
+    # Verify credentials
+    try:
+        api_v1.verify_credentials()
+    except Exception as e:
+        raise ValueError(f"Twitter authentication failed: {e}")
+        
+    return api_v1, client_v2
 
 def main():
     logger.info("Starting Tech Influencer Agent...")
     
-    # Validate Environment
+    # 1. Validate Environment & Secrets FIRST (Fail Fast)
     try:
         Config.validate()
-    except ValueError as e:
-        logger.critical(f"Configuration Error: {e}")
-        return
+        api_v1, client_v2 = get_twitter_api()
+    except Exception as e:
+        logger.critical(f"Initialization Error: {e}")
+        sys.exit(1) # Exit with error code
 
-    # Initialize components
+    # 2. Initialize Brain
     try:
         brain = AgentBrain()
     except Exception as e:
         logger.critical(f"Failed to initialize Brain: {e}")
-        return
+        sys.exit(1)
 
-    # Get Strategy
+    # 3. Get Strategy
     try:
         strategy = brain.get_strategy()
         logger.info(f"Strategy decided: {strategy}")
     except Exception as e:
         logger.error(f"Failed to generate strategy: {e}")
-        return
+        sys.exit(1)
 
-    # Execute Strategy
+    # 4. Execute Strategy
     try:
-        api_v1, client_v2 = get_twitter_api()
-        
         if strategy["type"] == "video":
             video_path = None
             try:
@@ -74,6 +85,7 @@ def main():
                 video_path = veo.generate_video(strategy["video_prompt"])
                 
                 # Upload Video (requires v1.1 API)
+                # Add timeout to media upload if possible, or rely on global socket timeout
                 media = api_v1.media_upload(video_path, chunked=True, media_category="tweet_video")
                 
                 # Post Tweet with Video (requires v2 API)
@@ -84,10 +96,17 @@ def main():
             except Exception as e:
                 logger.error(f"Video generation or upload failed: {e}")
                 logger.info("Falling back to text thread...")
-                # Fallback logic: Mask internal error
-                fallback_text = f"{strategy['content']} (Check back later for the video!)"
-                client_v2.create_tweet(text=fallback_text)
-                brain.log_post(strategy, success=False, error=str(e))
+                
+                # Fallback logic
+                try:
+                    fallback_text = f"{strategy['content']} (Check back later for the video!)"
+                    client_v2.create_tweet(text=fallback_text)
+                    brain.log_post(strategy, success=False, error=f"Video failed, posted text. Error: {e}")
+                except Exception as fallback_error:
+                    logger.error(f"Fallback tweet also failed: {fallback_error}")
+                    brain.log_post(strategy, success=False, error=f"Video and Fallback failed. Error: {e} | Fallback: {fallback_error}")
+                    sys.exit(1) # Fail job if even fallback fails
+
             finally:
                 # Cleanup video file
                 if video_path and os.path.exists(video_path):
@@ -100,25 +119,39 @@ def main():
         elif strategy["type"] == "thread":
             tweets = strategy["content"]
             previous_tweet_id = None
+            posted_tweets = []
             
-            for tweet_text in tweets:
-                # Basic length check
-                if len(tweet_text) > 280:
-                    logger.warning(f"Tweet too long, truncating: {tweet_text[:50]}...")
-                    tweet_text = tweet_text[:277] + "..."
+            try:
+                for tweet_text in tweets:
+                    # Basic length check
+                    if len(tweet_text) > 280:
+                        logger.warning(f"Tweet too long, truncating: {tweet_text[:50]}...")
+                        tweet_text = tweet_text[:277] + "..."
+                    
+                    if previous_tweet_id:
+                        response = client_v2.create_tweet(text=tweet_text, in_reply_to_tweet_id=previous_tweet_id)
+                    else:
+                        response = client_v2.create_tweet(text=tweet_text)
+                    
+                    previous_tweet_id = response.data['id']
+                    posted_tweets.append(previous_tweet_id)
                 
-                if previous_tweet_id:
-                    response = client_v2.create_tweet(text=tweet_text, in_reply_to_tweet_id=previous_tweet_id)
-                else:
-                    response = client_v2.create_tweet(text=tweet_text)
-                previous_tweet_id = response.data['id']
-            
-            logger.info("Thread posted successfully!")
-            brain.log_post(strategy, success=True)
+                logger.info("Thread posted successfully!")
+                brain.log_post(strategy, success=True)
+            except Exception as e:
+                logger.error(f"Failed to post thread: {e}")
+                # We can't easily rollback tweets, but we log the partial failure
+                brain.log_post(strategy, success=False, error=f"Partial thread failure. Posted: {len(posted_tweets)}. Error: {e}")
+                sys.exit(1)
 
     except Exception as e:
         logger.critical(f"Critical execution error: {e}")
-        brain.log_post(strategy, success=False, error=str(e))
+        # Try to log to Firestore if possible
+        try:
+             brain.log_post(strategy, success=False, error=f"Critical Error: {e}")
+        except:
+             pass
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

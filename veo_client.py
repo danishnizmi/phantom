@@ -1,3 +1,4 @@
+import os
 import time
 import requests
 import google.auth
@@ -6,15 +7,30 @@ from config import Config
 
 class VeoClient:
     def __init__(self, project_id: str, region: str):
+        if not project_id:
+            raise ValueError("project_id is required for VeoClient")
+        if not region:
+            raise ValueError("region is required for VeoClient")
+            
         self.project_id = project_id
         self.region = region
         self.base_url = f"https://{region}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{region}/publishers/google/models/veo-3.1-generate-001:predict"
-        self.credentials, _ = google.auth.default()
+        
+        try:
+            self.credentials, _ = google.auth.default()
+        except Exception as e:
+            raise RuntimeError(f"Failed to get default credentials: {e}")
 
     def _get_headers(self):
         """Refreshes credentials and returns headers."""
-        auth_req = google.auth.transport.requests.Request()
-        self.credentials.refresh(auth_req)
+        try:
+            auth_req = google.auth.transport.requests.Request()
+            self.credentials.refresh(auth_req)
+            if not self.credentials.valid:
+                 raise RuntimeError("Credentials invalid after refresh")
+        except Exception as e:
+             raise RuntimeError(f"Failed to refresh credentials: {e}")
+             
         return {
             "Authorization": f"Bearer {self.credentials.token}",
             "Content-Type": "application/json"
@@ -41,10 +57,14 @@ class VeoClient:
         }
 
         try:
+            # Add timeout (e.g., 10 minutes for generation, though predict is usually faster or returns LRO)
+            # Since we are using the predict endpoint, we assume it returns relatively quickly or we'd need LRO handling.
+            # Setting a generous timeout.
             response = requests.post(
                 self.base_url,
                 headers=self._get_headers(),
-                json=payload
+                json=payload,
+                timeout=600 
             )
             response.raise_for_status()
             result = response.json()
@@ -78,6 +98,8 @@ class VeoClient:
                 # Parse GCS URI (gs://bucket/path)
                 if video_uri.startswith("gs://"):
                     parts = video_uri[5:].split("/", 1)
+                    if len(parts) < 2:
+                         raise ValueError(f"Invalid GCS URI: {video_uri}")
                     bucket_name = parts[0]
                     blob_name = parts[1]
                     
@@ -92,6 +114,11 @@ class VeoClient:
             print(f"Video saved to {output_path}")
             return output_path
 
+        except requests.exceptions.RequestException as e:
+            print(f"Veo API request failed: {e}")
+            if e.response:
+                print(f"Response content: {e.response.text}")
+            raise
         except Exception as e:
             print(f"Veo generation failed: {e}")
             raise

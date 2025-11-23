@@ -9,20 +9,26 @@ steps:
     args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/$_IMAGE_NAME:$COMMIT_SHA']
     id: 'Push'
 
-  # 3. Update Cloud Run Job
+  # 3. Update Cloud Run Job (Create if not exists)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
+    entrypoint: /bin/bash
     args:
-      - 'run'
-      - 'jobs'
-      - 'update'
-      - '$_JOB_NAME'
-      - '--image'
-      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/$_IMAGE_NAME:$COMMIT_SHA'
-      - '--region'
-      - '$_REGION'
-      - '--set-env-vars'
-      - 'PROJECT_ID=$PROJECT_ID,REGION=$_REGION,BUDGET_MODE=$_BUDGET_MODE'
+      - '-c'
+      - |
+        gcloud run jobs describe $_JOB_NAME --region $_REGION > /dev/null 2>&1
+        if [ $? -eq 0 ]; then
+          gcloud run jobs update $_JOB_NAME \
+            --image $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/$_IMAGE_NAME:$COMMIT_SHA \
+            --region $_REGION \
+            --set-env-vars PROJECT_ID=$PROJECT_ID,REGION=$_REGION,BUDGET_MODE=$_BUDGET_MODE
+        else
+          gcloud run jobs create $_JOB_NAME \
+            --image $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/$_IMAGE_NAME:$COMMIT_SHA \
+            --region $_REGION \
+            --set-env-vars PROJECT_ID=$PROJECT_ID,REGION=$_REGION,BUDGET_MODE=$_BUDGET_MODE \
+            --max-retries 1 \
+            --task-timeout 10m
+        fi
     id: 'Deploy'
 
 substitutions:
