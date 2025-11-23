@@ -15,7 +15,7 @@ class AgentBrain:
         self.location = Config.REGION
         
         vertexai.init(project=self.project_id, location=self.location)
-        self.model = GenerativeModel("gemini-1.5-flash")
+        self.model = GenerativeModel("gemini-1.0-pro")
         self.db = firestore.Client(project=self.project_id)
         self.collection = self.db.collection(Config.COLLECTION_NAME)
 

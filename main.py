@@ -136,7 +136,7 @@ def main():
                     previous_tweet_id = response.data['id']
                     posted_tweets.append(previous_tweet_id)
                 
-                logger.info("Thread posted successfully!")
+                logger.info(f"Thread posted successfully! Tweet IDs: {posted_tweets}")
                 brain.log_post(strategy, success=True)
             except Exception as e:
                 logger.error(f"Failed to post thread: {e}")
