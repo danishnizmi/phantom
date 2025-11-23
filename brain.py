@@ -16,28 +16,47 @@ class AgentBrain:
         
         vertexai.init(project=self.project_id, location=self.location)
         
-        # Multi-model configuration with fallback
-        # Using current stable Gemini models (2.0/2.5)
-        # Gemini 1.5 models were retired and are no longer available
-        self.model_names = [
-            "gemini-2.5-flash",      # Primary: Latest, fast, cost-effective
-            "gemini-2.0-flash-001",  # Secondary: Stable fallback
-            "gemini-2.5-pro",        # Tertiary: Most capable (higher cost)
+        # Multi-model configuration with dynamic discovery
+        # Query Vertex AI to find available Gemini models instead of hardcoding
+        candidate_models = [
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite", 
+            "gemini-2.0-flash-001",
+            "gemini-2.0-flash-lite-001",
+            "gemini-2.5-pro",
         ]
+        
+        self.model_names = []
         self.models = {}
         
-        # Initialize all models
-        for model_name in self.model_names:
+        logger.info("Discovering available Gemini models...")
+        
+        # Test each candidate model to see if it's available
+        for model_name in candidate_models:
             try:
-                self.models[model_name] = GenerativeModel(model_name)
-                logger.info(f"✓ Initialized model: {model_name}")
+                model = GenerativeModel(model_name)
+                # Quick test to verify model is accessible
+                test_response = model.generate_content("Hi", 
+                    generation_config={"max_output_tokens": 5, "temperature": 0})
+                
+                if test_response.text:
+                    self.models[model_name] = model
+                    self.model_names.append(model_name)
+                    logger.info(f"✓ Verified model: {model_name}")
+                else:
+                    logger.warning(f"⚠ {model_name} responded but empty")
+                    
             except Exception as e:
-                logger.warning(f"✗ Failed to initialize {model_name}: {e}")
+                error_str = str(e)
+                if "404" in error_str:
+                    logger.debug(f"✗ {model_name} not available (404)")
+                else:
+                    logger.warning(f"✗ {model_name} failed: {error_str[:80]}")
         
         if not self.models:
-            raise RuntimeError("No Gemini models could be initialized")
+            raise RuntimeError(f"No Gemini models available. Tried: {candidate_models}")
         
-        logger.info(f"Active models: {list(self.models.keys())}")
+        logger.info(f"✓ Active models ({len(self.models)}): {self.model_names}")
         
         self.db = firestore.Client(project=self.project_id)
         self.collection = self.db.collection(Config.COLLECTION_NAME)
