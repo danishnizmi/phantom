@@ -1,4 +1,15 @@
 steps:
+  # 0. Create Artifact Registry Repo if not exists
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: /bin/bash
+    args:
+      - '-c'
+      - |
+        if ! gcloud artifacts repositories describe $_REPO_NAME --location=$_REGION > /dev/null 2>&1; then
+          gcloud artifacts repositories create $_REPO_NAME --repository-format=docker --location=$_REGION --description="Docker repository for Tech Influencer Agent"
+        fi
+    id: 'Create Repo'
+
   # 1. Build the container image
   - name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-t', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/$_IMAGE_NAME:$COMMIT_SHA', '.']
