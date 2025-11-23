@@ -55,6 +55,14 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
     --role="roles/datastore.user" \
     --condition=None
 
+# 2.5 Create Firestore Database
+echo "Creating Firestore Database..."
+if ! gcloud firestore databases list --format="value(name)" | grep -q "$PROJECT_ID/databases/(default)"; then
+    gcloud firestore databases create --location=$REGION
+else
+    echo "Firestore database already exists."
+fi
+
 # 3. Create Secrets (Placeholders)
 SECRETS=("TWITTER_CONSUMER_KEY" "TWITTER_CONSUMER_SECRET" "TWITTER_ACCESS_TOKEN" "TWITTER_ACCESS_TOKEN_SECRET")
 
