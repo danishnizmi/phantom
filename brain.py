@@ -67,7 +67,7 @@ class AgentBrain:
                     self.model_names.append(model_name)
                     logger.info(f"✓ Verified model: {model_name}")
                 else:
-                    logger.warning(f"⚠ {model_name} responded but empty")
+                    logger.warning(f"WARNING {model_name} responded but empty")
                     
             except Exception as e:
                 error_str = str(e)
@@ -96,7 +96,7 @@ class AgentBrain:
             except Exception as e:
                 logger.warning(f"Could not initialize search tool: {e}")
         else:
-            logger.warning("⚠ Google Search grounding disabled (Gemini 1.5 models not available)")
+            logger.warning("WARNING Google Search grounding disabled (Gemini 1.5 models not available)")
             logger.warning("   Using instructed search mode - model will be told to only use real URLs")
 
         self.db = firestore.Client(project=self.project_id)
@@ -287,15 +287,15 @@ CRITICAL VALIDATION - BE VERY STRICT:
    - Developer/tech audience, NOT consumer marketing
 
 EXAMPLES OF WHAT TO REJECT:
-- "Unleash your creative vision with [product]" ❌ Marketing language
-- Mentions products not in the original topic ❌ Made up
-- "Check back later for video/updates!" ❌ Placeholder text
-- Any "Pro" or version numbers not in topic ❌ Fabricated
-- News posts without URLs when URL is available ❌ Missing citation
+- "Unleash your creative vision with [product]" - Marketing language
+- Mentions products not in the original topic - Made up
+- "Check back later for video/updates!" - Placeholder text
+- Any "Pro" or version numbers not in topic - Fabricated
+- News posts without URLs when URL is available - Missing citation
 
 EXAMPLES OF WHAT TO APPROVE:
-- "New AI model. Can it handle production?\n\nhttps://..." ✅ Has URL
-- "[Real product] launches today. Will devs use it?" ✅ Real, engaging
+- "New AI model. Can it handle production?\n\nhttps://..." - Has URL
+- "[Real product] launches today. Will devs use it?" - Real, engaging
 
 DECISION (BE STRICT - WHEN IN DOUBT, REJECT):
 Reply EXACTLY:
@@ -455,7 +455,7 @@ Reply with EXACTLY ONE WORD: VIDEO, IMAGE, or TEXT"""
             # Generate Video Prompt and Tweet Text
             script_prompt = f"""Generate a tweet with video for THIS EXACT TOPIC: '{topic}'
 
-⚠️ CRITICAL: You MUST write about THIS EXACT topic. DO NOT make up fake products or features!
+CRITICAL WARNING: You MUST write about THIS EXACT topic. DO NOT make up fake products or features!
 
 You MUST provide BOTH parts in this EXACT format:
 CAPTION: <your complete tweet text here>
@@ -476,17 +476,18 @@ PROMPT REQUIREMENTS:
 - 50-100 characters
 
 BAD Examples (NEVER DO THIS):
-❌ "Unleash creativity with Nano Banana Pro!"
-❌ "Check back later for the video!"
-❌ Any filler text about waiting
+X "Unleash creativity with Nano Banana Pro!"
+X "Check back later for the video!"
+X Any filler text about waiting
 
 GOOD Examples:
-✅ "New AI model from Google. Can it replace developers?"
-✅ "Latest chip promises 10x speedup. Will it deliver?"
+OK "New AI model from Google. Can it replace developers?"
+OK "Latest chip promises 10x speedup. Will it deliver?"
 
 CRITICAL: Write COMPLETE, STANDALONE caption. NO placeholder text!
 
 Now generate for: '{topic}'
+"""
 
             try:
                 response = self._generate_with_fallback(script_prompt)
@@ -530,7 +531,7 @@ Now generate for: '{topic}'
             # Generate Image Prompt and Tweet Text
             script_prompt = f"""Generate a tweet with image for THIS EXACT TOPIC: '{topic}'
 
-⚠️ CRITICAL: You MUST write about THIS EXACT topic. DO NOT make up fake products or features!
+CRITICAL WARNING: You MUST write about THIS EXACT topic. DO NOT make up fake products or features!
 
 You MUST provide BOTH parts in this EXACT format:
 CAPTION: <your complete tweet text here>
@@ -551,17 +552,18 @@ PROMPT REQUIREMENTS:
 - 50-100 characters
 
 BAD Examples (NEVER DO THIS):
-❌ "Unleash creativity with Gemini 3 Pro Image!"
-❌ "Check back later for updates!"
-❌ Any placeholder or filler text
+X "Unleash creativity with Gemini 3 Pro Image!"
+X "Check back later for updates!"
+X Any placeholder or filler text
 
 GOOD Examples:
-✅ "OpenAI's new vision model. Can it debug CSS layouts?"
-✅ "AI chip promises 10x gains. But at what cost?"
+OK "OpenAI's new vision model. Can it debug CSS layouts?"
+OK "AI chip promises 10x gains. But at what cost?"
 
 CRITICAL: Write COMPLETE, STANDALONE caption. NO placeholder text!
 
 Now generate for: '{topic}'
+"""
 
             try:
                 response = self._generate_with_fallback(script_prompt)
