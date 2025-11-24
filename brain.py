@@ -338,7 +338,15 @@ WHY: [impact/relevance to {target_audience}]
             "check out",
             "read more",
             "bringing more tech production",
-            "tech production stateside"
+            "tech production stateside",
+            ", honestly",
+            "honestly.",
+            ", frankly",
+            "frankly.",
+            "to be honest",
+            "if i'm being honest",
+            ", really",
+            "really."
         ]
 
         # US-centric phrases to reject (bot is Australian, should be global)
@@ -579,6 +587,12 @@ Choose IMAGE only if:
 - Before/after comparison is meaningful
 - Example: "New chip design", "UI redesign comparison"
 
+Choose MEME if:
+- Story is ironic, contradictory, or absurd (perfect for meme format)
+- Situation is relatable and funny to tech community
+- Can be expressed as reaction/commentary meme
+- Example: "Another AI company claiming AGI", "Tech layoffs then hiring spree", "New JS framework drops"
+
 Choose TEXT if:
 - Simple announcement or partnership (like "X partners with Y")
 - Financial/business news without technical process
@@ -586,9 +600,9 @@ Choose TEXT if:
 - Media would be redundant with preview
 - Example: "Company raises $X", "Partnership announced"
 
-IMPORTANT: Don't generate redundant media just for engagement. If the Twitter link preview card shows the story well, use TEXT. Only generate media if it EXPLAINS or VISUALIZES something complex.
+IMPORTANT: Don't generate redundant media just for engagement. If the Twitter link preview card shows the story well, use TEXT. MEME should be used sparingly for truly ironic/funny stories (every 5-7 posts).
 
-Reply with EXACTLY ONE WORD: VIDEO, IMAGE, or TEXT"""
+Reply with EXACTLY ONE WORD: VIDEO, IMAGE, MEME, or TEXT"""
 
             try:
                 decision = self._generate_with_fallback(decision_prompt).upper()
@@ -596,6 +610,8 @@ Reply with EXACTLY ONE WORD: VIDEO, IMAGE, or TEXT"""
 
                 if "VIDEO" in decision:
                     post_type = "video"
+                elif "MEME" in decision:
+                    post_type = "meme"
                 elif "IMAGE" in decision:
                     post_type = "image"
                 else:
@@ -852,6 +868,97 @@ Now generate for the article above.
 
             strategy["content"] = caption
             strategy["image_prompt"] = visual_prompt
+
+        elif post_type == "meme":
+            # Generate Meme about current tech affairs
+            logger.info(f"Generating meme for: {topic}")
+
+            meme_prompt = f"""Generate a MEME about this tech news story.
+
+ARTICLE CONTEXT:
+{story_context}
+
+TOPIC: {topic}
+
+You MUST provide BOTH parts in this EXACT format:
+CAPTION: <your meme caption text here>
+PROMPT: <detailed meme image description for Imagen>
+
+MEME CAPTION REQUIREMENTS:
+- Short, punchy, meme-style text (50-150 chars)
+- Sound CASUAL and RELATABLE to tech community
+- Can be sarcastic, ironic, or observational
+- Reference the ACTUAL story with humor
+- NO formal language, NO marketing speak
+- Global perspective (bot is Australian)
+
+MEME IMAGE PROMPT REQUIREMENTS:
+- Describe a REACTION IMAGE or MEME FORMAT
+- Be specific about expression/emotion
+- Meme-worthy situation or comparison
+- Classic meme styles work: "Drake approving/disapproving", "Distracted boyfriend", "This is fine", etc.
+- Or describe reaction: "Person looking shocked", "Side-eye glance", "Facepalm"
+- 80-150 characters
+
+GOOD MEME EXAMPLES:
+Topic: "Another startup claims AGI breakthrough"
+CAPTION: "Another AGI announcement. Sure mate, right after Duke Nukem Forever ships."
+PROMPT: "Side-eye meme format, person giving suspicious skeptical look to camera, doubtful expression"
+
+Topic: "Meta lays off AI team then posts 50 AI job openings"
+CAPTION: "Meta: Fires AI team. Also Meta: Now hiring AI engineers. Make it make sense."
+PROMPT: "Two button meme format, person sweating choosing between two contradictory buttons, corporate confusion"
+
+Topic: "New JavaScript framework promises to end framework fatigue"
+CAPTION: "New JS framework to end framework fatigue. The irony is not lost on us."
+PROMPT: "This is fine meme, person sitting in burning room drinking coffee, resigned acceptance"
+
+Now generate the meme:
+"""
+
+            try:
+                response = self._generate_with_fallback(meme_prompt)
+                logger.info(f"Meme generation response: {response[:100]}...")
+
+                if "CAPTION:" in response and "PROMPT:" in response:
+                    parts = response.split("PROMPT:")
+                    caption_part = parts[0].replace("CAPTION:", "").strip()
+                    meme_image_prompt = parts[1].strip()
+
+                    # Validate caption
+                    if len(caption_part) < 20 or not any(caption_part.endswith(p) for p in ['.', '!', '?']):
+                        logger.warning(f"Meme caption seems incomplete: {caption_part}")
+                        caption_part = f"{caption_part}."
+
+                    max_caption_len = 175 if story_url else 280
+                    caption = caption_part[:max_caption_len]
+
+                    # Validate meme prompt
+                    if len(meme_image_prompt) < 30:
+                        logger.warning(f"Meme prompt too short: {meme_image_prompt}")
+                        raise ValueError(f"Meme prompt must be detailed (30+ chars)")
+
+                    logger.info(f"Meme image prompt: {meme_image_prompt[:100]}...")
+                else:
+                    logger.error("Response missing CAPTION: or PROMPT: markers")
+                    raise ValueError("Invalid format - missing CAPTION or PROMPT")
+
+            except Exception as e:
+                logger.error(f"Failed to generate meme: {e}")
+                raise
+
+            # Add URL to caption if available
+            if story_url:
+                if story_url not in caption:
+                    if len(caption) + len(story_url) + 4 <= 280:
+                        caption = f"{caption}\n\n{story_url}"
+                    else:
+                        max_cap_len = 280 - len(story_url) - 7
+                        caption = f"{caption[:max_cap_len]}...\n\n{story_url}"
+                    logger.info(f"Added URL to meme caption: {story_url}")
+
+            strategy["content"] = caption
+            strategy["image_prompt"] = meme_image_prompt  # Use same image generation as IMAGE type
 
         else:
             # Generate Hacker News Style Post with REAL URL

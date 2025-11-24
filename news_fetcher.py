@@ -199,16 +199,17 @@ class NewsFetcher:
         # Sort by relevance
         scored_stories.sort(key=lambda x: x['relevance_score'], reverse=True)
 
-        # Log top 5 for debugging
-        logger.info("Top 5 stories by score:")
-        for i, story in enumerate(scored_stories[:5]):
-            logger.info(f"  {i+1}. [{story['category'].upper()}] {story['title'][:40]}... (score: {story['relevance_score']:.1f})")
+        # Log top 10 for debugging (increased from 5 for more visibility)
+        logger.info("Top 10 stories by score:")
+        for i, story in enumerate(scored_stories[:10]):
+            logger.info(f"  {i+1}. [{story['category'].upper()}] {story['title'][:40]}... (score: {story['relevance_score']:.1f}) from {story.get('source', 'unknown')}")
 
-        # Pick from top 5 to add some variety
-        top_stories = scored_stories[:5]
+        # Pick from top 15 to add MORE variety (not just top 5)
+        # This prevents Google blog from dominating
+        top_stories = scored_stories[:15]
         if top_stories:
             selected = random.choice(top_stories)
-            logger.info(f"✓ Selected: [{selected['category'].upper()}] {selected['title'][:60]}... (score: {selected['relevance_score']:.1f})")
+            logger.info(f"✓ Selected: [{selected['category'].upper()}] {selected['title'][:60]}... (score: {selected['relevance_score']:.1f}) from {selected.get('source', 'unknown')}")
             return selected
 
         return None
