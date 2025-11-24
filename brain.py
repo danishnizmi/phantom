@@ -22,20 +22,12 @@ class AgentBrain:
         
         vertexai.init(project=self.project_id, location=self.location)
         
-        # Initialize Google Search Grounding Tool
-        # NOTE: Gemini 2.0/2.5 models don't support google_search_retrieval yet (known SDK bug)
-        # Using Gemini 1.5 models for search-enabled queries
-        # See: https://github.com/GoogleCloudPlatform/generative-ai/issues/667
-        self.search_tool = Tool.from_google_search_retrieval(
-            google_search_retrieval=grounding.GoogleSearchRetrieval()
-        )
-
         # Multi-model configuration with dynamic discovery
-        # Prioritize Gemini 1.5 models for search compatibility
+        # Try Gemini 1.5 first for search compatibility, then newer models
         candidate_models = [
-            "gemini-1.5-pro",          # Best for search grounding
-            "gemini-1.5-flash",        # Fast, supports search
-            "gemini-2.5-flash",        # Newer but no search support yet
+            "gemini-1.5-pro",          # Best for search grounding (if available)
+            "gemini-1.5-flash",        # Fast, supports search (if available)
+            "gemini-2.5-flash",
             "gemini-2.5-flash-lite",
             "gemini-2.0-flash-001",
             "gemini-2.0-flash-lite-001",
@@ -85,9 +77,27 @@ class AgentBrain:
         
         if not self.models:
             raise RuntimeError(f"No Gemini models available. Tried: {candidate_models}")
-        
+
         logger.info(f"✓ Active models ({len(self.models)}): {self.model_names}")
-        
+
+        # Initialize Google Search Grounding Tool (only if 1.5 models available)
+        # NOTE: Gemini 2.0/2.5 don't support google_search_retrieval yet
+        # See: https://github.com/GoogleCloudPlatform/generative-ai/issues/667
+        self.search_tool = None
+        has_1_5_model = any("1.5" in name for name in self.model_names)
+
+        if has_1_5_model:
+            try:
+                self.search_tool = Tool.from_google_search_retrieval(
+                    google_search_retrieval=grounding.GoogleSearchRetrieval()
+                )
+                logger.info("✓ Google Search grounding enabled (Gemini 1.5 models available)")
+            except Exception as e:
+                logger.warning(f"Could not initialize search tool: {e}")
+        else:
+            logger.warning("⚠ Google Search grounding disabled (Gemini 1.5 models not available)")
+            logger.warning("   Using instructed search mode - model will be told to only use real URLs")
+
         self.db = firestore.Client(project=self.project_id)
         self.collection = self.db.collection(Config.COLLECTION_NAME)
 
@@ -169,18 +179,32 @@ class AgentBrain:
 
     def _get_trending_topic(self) -> str:
         """
-        Asks Gemini to identify a trending tech topic using Google Search Grounding.
+        Asks Gemini to identify a trending tech topic.
+        Uses Google Search if available, otherwise relies on model's recent knowledge.
         """
-        prompt = """Find the single most interesting tech news story RIGHT NOW (last 24 hours).
-        Focus on:
-        - Major AI product launches or updates
-        - Significant open source releases
-        - Big tech industry moves
-        
-        Return ONLY the headline/topic name. Be specific."""
-        
-        # Use search tool to get real-time info
-        return self._generate_with_fallback(prompt, tools=[self.search_tool])
+        if self.search_tool:
+            prompt = """Find the single most interesting tech news story RIGHT NOW (last 24 hours).
+            Focus on:
+            - Major AI product launches or updates
+            - Significant open source releases
+            - Big tech industry moves
+
+            Return ONLY the headline/topic name. Be specific."""
+            # Use search tool to get real-time info
+            return self._generate_with_fallback(prompt, tools=[self.search_tool])
+        else:
+            # Without search: ask for recent topics from model's knowledge
+            prompt = """What is a significant tech news or product launch from your recent knowledge?
+            Focus on:
+            - Major AI products (ChatGPT, Claude, Gemini, etc.)
+            - Popular open source projects (React, Next.js, Tailwind, etc.)
+            - Big tech companies (Google, Microsoft, Meta, Apple, etc.)
+
+            Return ONLY a specific product/project name and brief context. Be real and specific.
+            Example: "Anthropic Claude 3 Opus" or "Meta Llama 3" or "OpenAI GPT-4 Turbo"
+
+            Do NOT make up fake products or news."""
+            return self._generate_with_fallback(prompt)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     def _check_history(self, topic: str) -> bool:
@@ -351,10 +375,12 @@ Reply with EXACTLY ONE WORD: VIDEO, IMAGE, or TEXT"""
             strategy["image_prompt"] = visual_prompt
             
         else:
-            # Generate Hacker News Style Post with Grounding
+            # Generate Hacker News Style Post
             logger.info(f"Generating HN-style post for: {topic}")
 
-            post_prompt = f"""Search Google for recent news about '{topic}' and write an engaging developer-focused tweet.
+            if self.search_tool:
+                # With search grounding - can find real URLs
+                post_prompt = f"""Search Google for recent news about '{topic}' and write an engaging developer-focused tweet.
 
 CRITICAL REQUIREMENTS:
 1. You MUST use Google Search to find a REAL, working URL about this topic
@@ -374,45 +400,57 @@ CONSTRAINTS:
 - NO hashtags, NO emojis
 - If you cannot find a real URL, say "No URL found" instead of making one up
 """
-
-            try:
-                # Use search tool with URL validation
-                response = self._generate_with_fallback(
-                    post_prompt,
-                    tools=[self.search_tool],
-                    require_url=True
-                )
-                tweet = response.strip()
-
-                # Validate we got a real URL
-                urls = self._extract_urls(tweet)
-                valid_urls = [url for url in urls if self._validate_url(url)]
-
-                if not valid_urls:
-                    logger.error("No valid URL found in generated tweet, trying alternative approach")
-                    # Try one more time with simpler prompt
-                    simple_prompt = f"Use Google Search to find the official URL for '{topic}' and write a 280-char tweet with that URL."
+                try:
                     response = self._generate_with_fallback(
-                        simple_prompt,
+                        post_prompt,
                         tools=[self.search_tool],
                         require_url=True
                     )
                     tweet = response.strip()
+                except Exception as e:
+                    logger.error(f"Search-based generation failed: {e}, falling back to no-URL mode")
+                    self.search_tool = None  # Disable for this run
 
-                # Strict length check
-                if len(tweet) > 280:
-                    logger.warning(f"Tweet too long ({len(tweet)}), truncating.")
-                    # Try to truncate intelligently at sentence/word boundary
-                    tweet = tweet[:277] + "..."
+            if not self.search_tool:
+                # Without search grounding - provide known/example URLs
+                logger.info("Generating post WITHOUT URL (search grounding unavailable)")
+                post_prompt = f"""Write an engaging developer-focused tweet about '{topic}'.
 
-                # Final validation
-                if not tweet or len(tweet) < 10:
-                    tweet = f"{topic} - Check out this latest development in tech."
+CRITICAL INSTRUCTIONS:
+1. DO NOT include any URLs - we cannot verify them
+2. Focus on the technology and its impact
+3. Ask a provocative question or make an interesting observation
+4. Be authentic and don't overhype
 
-                strategy["content"] = [tweet] # List format for consistency
-            except Exception as e:
-                logger.error(f"Failed to generate HN post: {e}")
-                raise
+Format:
+[Interesting fact or question about {topic}]
+
+[Technical insight or opinion that invites discussion]
+
+CONSTRAINTS:
+- Total length: Under 280 characters
+- NO hashtags, NO emojis, NO URLs
+- Be truthful and don't make up facts
+
+Example style: "The new model outperforms GPT-4 on reasoning tasks. But can it actually replace human developers? Probably not yet."
+"""
+                try:
+                    response = self._generate_with_fallback(post_prompt)
+                    tweet = response.strip()
+                except Exception as e:
+                    logger.error(f"Failed to generate post: {e}")
+                    raise
+
+            # Strict length check
+            if len(tweet) > 280:
+                logger.warning(f"Tweet too long ({len(tweet)}), truncating.")
+                tweet = tweet[:277] + "..."
+
+            # Final validation
+            if not tweet or len(tweet) < 10:
+                tweet = f"{topic} is making waves in tech. What's your take?"
+
+            strategy["content"] = [tweet]
 
         return strategy
 
