@@ -1,8 +1,7 @@
 import logging
 import vertexai
 from google.cloud import aiplatform
-from vertexai.generative_models import GenerativeModel, Tool
-from google.cloud.aiplatform_v1.types import GoogleSearchRetrieval
+from vertexai.generative_models import GenerativeModel, Tool, grounding
 from vertexai.preview.vision_models import ImageGenerationModel
 from google.cloud import firestore
 from config import Config
@@ -23,7 +22,7 @@ class AgentBrain:
         
         # Initialize Google Search Grounding Tool
         self.search_tool = Tool.from_google_search_retrieval(
-            google_search_retrieval=GoogleSearchRetrieval()
+            google_search_retrieval=grounding.GoogleSearchRetrieval()
         )
         
         # Multi-model configuration with dynamic discovery
