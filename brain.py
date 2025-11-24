@@ -235,13 +235,13 @@ WHY: [impact/relevance to {target_audience}]
             logger.warning(f"Failed to extract context: {e}, using title only")
             return f"Article: {title}"
 
-    def _get_trending_story(self) -> dict:
+    def _get_trending_story(self, preferred_categories: List[str] = None) -> dict:
         """
         Gets a trending tech story with REAL URL from Hacker News or other sources.
         Fetches article content for rich context.
         Returns dict with {title, url, source, context, category}.
         """
-        story = self.news_fetcher.get_trending_story()
+        story = self.news_fetcher.get_trending_story(preferred_categories=preferred_categories)
 
         if story:
             logger.info(f"✓ Found trending story: {story['title'][:50]}...")
@@ -310,6 +310,64 @@ WHY: [impact/relevance to {target_audience}]
         except Exception as e:
             logger.warning(f"Firestore history check failed: {e}. Proceeding without check.")
             return False
+
+    def _get_recent_categories(self, limit: int = 10) -> List[str]:
+        """
+        Gets categories of recent posts for variety and balance tracking.
+        Returns list of category names from most recent to oldest.
+        """
+        try:
+            docs = self.collection.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(limit).stream()
+            categories = []
+            for doc in docs:
+                data = doc.to_dict()
+                category = data.get("category", "tech")
+                categories.append(category)
+
+            logger.info(f"Recent {len(categories)} post categories: {categories}")
+            return categories
+        except Exception as e:
+            logger.warning(f"Failed to get recent categories: {e}")
+            return []
+
+    def _get_preferred_categories(self) -> List[str]:
+        """
+        Determines preferred categories based on recent post history.
+        Enforces variety (no 3+ same in a row) and balance (diversify if one dominates).
+        """
+        recent_10 = self._get_recent_categories(10)
+        recent_3 = recent_10[:3] if len(recent_10) >= 3 else recent_10
+
+        # VARIETY CHECK: Last 3 posts same category?
+        if len(recent_3) >= 3 and len(set(recent_3)) == 1:
+            repeated_category = recent_3[0]
+            logger.warning(f"Last 3 posts all {repeated_category}. Forcing variety!")
+            # Return all OTHER categories
+            all_categories = ['ai', 'crypto', 'finance', 'tech']
+            preferred = [cat for cat in all_categories if cat != repeated_category]
+            logger.info(f"Variety enforcement: preferred categories = {preferred}")
+            return preferred
+
+        # BALANCE CHECK: Count category distribution in last 10
+        if len(recent_10) >= 5:
+            from collections import Counter
+            counts = Counter(recent_10)
+            total = len(recent_10)
+
+            # Find if any category is over-represented (>50%)
+            for category, count in counts.most_common():
+                percentage = (count / total) * 100
+                if percentage > 50:
+                    logger.warning(f"Category '{category}' is {percentage:.0f}% of last {total} posts. Rebalancing!")
+                    # Prefer categories that are under-represented
+                    all_categories = ['ai', 'crypto', 'finance', 'tech']
+                    # Sort by count (ascending) - prefer least used
+                    preferred = sorted(all_categories, key=lambda cat: counts.get(cat, 0))
+                    logger.info(f"Balance enforcement: preferred categories = {preferred}")
+                    return preferred
+
+        # Default: normal priority (AI > crypto > finance > tech)
+        return ['ai', 'crypto', 'finance', 'tech']
 
     def _validate_strategy(self, strategy: dict) -> dict:
         """
@@ -537,7 +595,10 @@ Does it relate to actual topic "{topic}"? Are all claims real?
         Internal method to generate and validate a strategy.
         Separated for retry logic.
         """
-        story = self._get_trending_story()
+        # Get preferred categories based on recent post history (variety + balance)
+        preferred_categories = self._get_preferred_categories()
+
+        story = self._get_trending_story(preferred_categories=preferred_categories)
         topic = story['title']
         story_url = story.get('url')  # Real URL or None
         story_context = story.get('context', f"Article: {topic}")  # Rich context from article
@@ -548,7 +609,7 @@ Does it relate to actual topic "{topic}"? Are all claims real?
             # Try to get a different story
             try:
                 for _ in range(3):  # Try up to 3 times
-                    story = self._get_trending_story()
+                    story = self._get_trending_story(preferred_categories=preferred_categories)
                     topic = story['title']
                     story_url = story.get('url')
                     story_context = story.get('context', f"Article: {topic}")
