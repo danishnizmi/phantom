@@ -250,49 +250,68 @@ class AgentBrain:
         source_url = strategy.get('source_url')
         category = strategy.get('category', 'unknown')
 
-        # Build validation prompt
+        # Build validation prompt with STRICT reality checks
         content_text = content[0] if isinstance(content, list) else content
-        validation_prompt = f"""You are a quality control AI. Review this social media post before it goes live.
+        validation_prompt = f"""You are a STRICT quality control AI. Your job is to REJECT fake, made-up, or misleading content.
 
-POST DETAILS:
-- Topic: "{topic}"
+ACTUAL NEWS STORY:
+- Real Topic: "{topic}"
+- Real URL: {source_url if source_url else 'No URL provided'}
 - Category: {category}
+
+GENERATED CONTENT TO VALIDATE:
 - Type: {post_type}
-- URL: {source_url if source_url else 'No URL'}
 - Content: "{content_text}"
 
-VALIDATION CHECKLIST (Be STRICT):
-1. ✓ Content COMPLETE? Must be full sentences ending with punctuation (. ! ?)
-2. ✓ Content accurately relates to topic?
-3. ✓ URL is real and legitimate? (if present)
-4. ✓ Tone appropriate (engaging but not clickbait)?
-5. ✓ Under 280 characters?
-6. ✓ Logical sense, no obvious errors?
-7. ✓ Appropriate for professional tech audience?
+CRITICAL VALIDATION - BE VERY STRICT:
 
-REJECT IF ANY:
-- Incomplete sentences (missing endings, cut-off mid-thought)
-- Content doesn't match topic
-- URL looks fake or suspicious
-- Contains errors, typos, or nonsense
-- Too promotional or spammy
-- Inappropriate or offensive
-- Too short (under 20 chars) or unclear
+1. ✓ Does content relate to the ACTUAL news topic "{topic}"?
+   - REJECT if it talks about different products/companies
+   - REJECT if it mentions products not in the topic
+   - REJECT if it's promotional/marketing language
 
-DECISION:
-Reply with EXACTLY ONE of these formats:
+2. ✓ Is content FACTUAL and not made-up?
+   - REJECT if it mentions fake product names (e.g., "Nano Banana Pro")
+   - REJECT if it claims features not mentioned in topic
+   - REJECT if it sounds like an advertisement
+   - REJECT if it invents version numbers or specs
 
-APPROVE: [brief reason why it passes all checks]
-REJECT: [specific reason it fails - mention WHICH check failed]
+3. ✓ Is content COMPLETE?
+   - Must end with punctuation (. ! ?)
+   - Must be full sentences
+   - Character count: {len(content_text)} (must be 20-280)
 
-Content to validate: "{content_text}"
-Character count: {len(content_text)}
-Ends with punctuation? {content_text[-1] if content_text else 'N/A'} in ['.', '!', '?']
+4. ✓ Is tone appropriate?
+   - Engaging but NOT promotional
+   - Question-based or provocative, NOT hype
+   - Developer/tech audience, NOT consumer marketing
+
+EXAMPLES OF WHAT TO REJECT:
+- "Unleash your creative vision with [product]" ❌ Marketing language
+- Mentions products not in the original topic ❌ Made up
+- "Check back later for video!" ❌ Irrelevant filler
+- Any "Pro" or version numbers not in topic ❌ Fabricated
+
+EXAMPLES OF WHAT TO APPROVE:
+- "New AI model from [company in topic]. Can it handle production workloads?" ✅
+- "[Real product from topic] launches today. But will developers actually use it?" ✅
+
+DECISION (BE STRICT - WHEN IN DOUBT, REJECT):
+Reply EXACTLY:
+
+APPROVE: [reason it matches topic AND is factual]
+OR
+REJECT: [specific problem - made up content, wrong topic, promotional, etc.]
+
+Now validate: "{content_text}"
+Does it relate to actual topic "{topic}"? Are all claims real?
 """
 
         try:
             response = self._generate_with_fallback(validation_prompt)
             response_upper = response.upper()
+
+            logger.info(f"Validation response: {response}")
 
             if 'APPROVE' in response_upper:
                 reason = response.split(':', 1)[1].strip() if ':' in response else response
@@ -301,14 +320,14 @@ Ends with punctuation? {content_text[-1] if content_text else 'N/A'} in ['.', '!
                 reason = response.split(':', 1)[1].strip() if ':' in response else response
                 return {'valid': False, 'reason': reason}
             else:
-                # Unclear response, err on the side of caution
+                # Unclear response, be strict - reject
                 logger.warning(f"Unclear validation response: {response}")
-                return {'valid': False, 'reason': f"Validation unclear: {response}"}
+                return {'valid': False, 'reason': f"Validation unclear, rejecting to be safe: {response}"}
 
         except Exception as e:
             logger.error(f"Validation check failed: {e}")
-            # If validation fails, approve by default (don't block posting)
-            return {'valid': True, 'reason': f"Validation check error, proceeding: {e}"}
+            # If validation itself fails, REJECT to be safe (don't post potentially bad content)
+            return {'valid': False, 'reason': f"Validation system error, rejecting for safety: {e}"}
 
     def generate_image(self, prompt: str) -> str:
         """
@@ -433,30 +452,38 @@ Reply with EXACTLY ONE WORD: VIDEO, IMAGE, or TEXT"""
 
         if post_type == "video":
             # Generate Video Prompt and Tweet Text
-            script_prompt = f"""Generate a tweet with video for '{topic}'.
+            script_prompt = f"""Generate a tweet with video for THIS EXACT TOPIC: '{topic}'
+
+⚠️ CRITICAL: You MUST write about THIS EXACT topic. DO NOT make up fake products or features!
 
 You MUST provide BOTH parts in this EXACT format:
 CAPTION: <your complete tweet text here>
 PROMPT: <your visual description here>
 
 CAPTION REQUIREMENTS:
-- Must be a COMPLETE sentence or thought
+- Must reference the ACTUAL topic: '{topic}'
+- Do NOT invent product names, versions, or features
+- Must be a COMPLETE sentence ending with punctuation (. ! ?)
 - 100-200 characters total
-- Engaging and provocative for developers
+- Engaging question or observation for developers
+- NO marketing language ("Unleash", "Revolutionary", etc.)
 - NO hashtags, NO emojis
-- Must end with punctuation (. ! ?)
 
 PROMPT REQUIREMENTS:
-- Detailed visual description for video generator
-- Describe the scene, actions, style
+- Visual description for video generator
+- Tech-focused, developer-oriented visuals
 - 50-100 characters
 
-Example:
-CAPTION: AI agents can now write production code. But will they pass code review?
-PROMPT: Animated screen recording showing AI writing Python code, with syntax highlighting and terminal output
+BAD Example (makes stuff up):
+CAPTION: Unleash creativity with Nano Banana Pro! ❌ FAKE PRODUCT
+PROMPT: Marketing video
+
+GOOD Example (real, engaging):
+CAPTION: New AI model from Google. Can it actually replace developers? ✅ REAL
+PROMPT: Tech demo showing code generation on dark IDE
 
 Now generate for: '{topic}'
-CRITICAL: Output MUST include both CAPTION: and PROMPT: with complete text after each."""
+Remember: Write about THIS topic only. No fake products!
 
             try:
                 response = self._generate_with_fallback(script_prompt)
@@ -486,30 +513,38 @@ CRITICAL: Output MUST include both CAPTION: and PROMPT: with complete text after
 
         elif post_type == "image":
             # Generate Image Prompt and Tweet Text
-            script_prompt = f"""Generate a tweet with image for '{topic}'.
+            script_prompt = f"""Generate a tweet with image for THIS EXACT TOPIC: '{topic}'
+
+⚠️ CRITICAL: You MUST write about THIS EXACT topic. DO NOT make up fake products or features!
 
 You MUST provide BOTH parts in this EXACT format:
 CAPTION: <your complete tweet text here>
 PROMPT: <your visual description here>
 
 CAPTION REQUIREMENTS:
-- Must be a COMPLETE sentence or thought
+- Must reference the ACTUAL topic: '{topic}'
+- Do NOT invent product names, versions, or features
+- Must be a COMPLETE sentence ending with punctuation (. ! ?)
 - 100-200 characters total
-- Engaging and provocative for developers
+- Engaging question or observation for developers
+- NO marketing language ("Unleash", "Revolutionary", etc.)
 - NO hashtags, NO emojis
-- Must end with punctuation (. ! ?)
 
 PROMPT REQUIREMENTS:
-- Detailed visual description for image generator (Imagen)
-- Describe composition, style, elements
+- Visual description for image generator (Imagen)
+- Tech photography or illustration style
 - 50-100 characters
 
-Example:
-CAPTION: The new AI chip promises 10x speedup. But can it handle production workloads?
-PROMPT: Futuristic AI chip on circuit board, glowing neural pathways, tech photography style, 16:9 aspect ratio
+BAD Example (makes stuff up):
+CAPTION: Unleash creativity with Gemini 3 Pro Image! ❌ FAKE VERSION
+PROMPT: Marketing image
+
+GOOD Example (real, engaging):
+CAPTION: OpenAI releases new vision model. Can it debug CSS layouts? ✅ REAL
+PROMPT: AI analyzing code on screen, tech photography, dark theme, 16:9
 
 Now generate for: '{topic}'
-CRITICAL: Output MUST include both CAPTION: and PROMPT: with complete text after each."""
+Remember: Write about THIS topic only. No fake products or versions!
 
             try:
                 response = self._generate_with_fallback(script_prompt)
