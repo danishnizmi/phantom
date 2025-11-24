@@ -182,42 +182,54 @@ class AgentBrain:
         # All models failed
         raise RuntimeError(f"All models failed. Last error: {last_error}")
 
-    def _extract_article_context(self, title: str, url: str, html_content: str) -> str:
+    def _extract_article_context(self, title: str, url: str, html_content: str, category: str = "tech") -> str:
         """
         Extracts key context from article content using AI.
         Returns a concise summary of key points for media generation.
+        Category determines the audience focus (ai/crypto/finance/tech).
         """
         if not html_content or len(html_content) < 100:
             logger.warning("No article content available, using title only")
             return f"Article: {title}"
 
-        # Ask AI to extract key technical details
-        context_prompt = f"""Extract the KEY TECHNICAL DETAILS from this article for creating engaging media content.
+        # Determine audience based on category
+        audience_map = {
+            "ai": "AI engineers and ML practitioners",
+            "crypto": "crypto traders and blockchain enthusiasts",
+            "finance": "tech investors and financial analysts",
+            "tech": "tech enthusiasts and early adopters"
+        }
+        target_audience = audience_map.get(category, "tech community")
+
+        # Ask AI to extract key details with category-specific angle
+        context_prompt = f"""Extract the KEY DETAILS from this article for creating engaging media content.
 
 ARTICLE TITLE: {title}
 ARTICLE CONTENT (HTML):
 {html_content[:8000]}
 
+TARGET AUDIENCE: {target_audience}
+
 Extract and return ONLY:
 1. Main announcement/news (1 sentence)
-2. Key technical details or specs (2-3 bullet points)
-3. Why developers/tech audience should care (1 sentence)
+2. Key details or specs (2-3 bullet points with NUMBERS/METRICS)
+3. Why {target_audience} should care (1 sentence)
 
-Be SPECIFIC - include numbers, names, technical terms from the article.
+Be SPECIFIC - include numbers, names, metrics, prices, percentages from the article.
 Keep total output under 400 characters.
 
 Format:
 NEWS: [main point]
 DETAILS:
-- [specific detail 1]
-- [specific detail 2]
-- [specific detail 3]
-WHY: [impact/relevance]
+- [specific detail with numbers]
+- [specific detail with metrics]
+- [specific detail with data]
+WHY: [impact/relevance to {target_audience}]
 """
 
         try:
             context = self._generate_with_fallback(context_prompt)
-            logger.info(f"Extracted article context: {context[:100]}...")
+            logger.info(f"Extracted article context ({category}): {context[:100]}...")
             return context
         except Exception as e:
             logger.warning(f"Failed to extract context: {e}, using title only")
@@ -227,17 +239,18 @@ WHY: [impact/relevance]
         """
         Gets a trending tech story with REAL URL from Hacker News or other sources.
         Fetches article content for rich context.
-        Returns dict with {title, url, source, context}.
+        Returns dict with {title, url, source, context, category}.
         """
         story = self.news_fetcher.get_trending_story()
 
         if story:
             logger.info(f"✓ Found trending story: {story['title'][:50]}...")
 
-            # Fetch article content for context
+            # Fetch article content for context with category-specific audience
             if story.get('url'):
                 html_content = self.news_fetcher.fetch_article_content(story['url'])
-                context = self._extract_article_context(story['title'], story['url'], html_content)
+                category = story.get('category', 'tech')  # Get category from story or default to 'tech'
+                context = self._extract_article_context(story['title'], story['url'], html_content, category)
                 story['context'] = context
             else:
                 story['context'] = f"Article: {story['title']}"
@@ -246,7 +259,7 @@ WHY: [impact/relevance]
 
         # Fallback: use model to suggest a topic (no URL)
         logger.warning("Could not fetch real news, falling back to model knowledge")
-        prompt = """Suggest ONE specific, real tech product or project that developers would find interesting.
+        prompt = """Suggest ONE specific, real tech product or project that tech enthusiasts would find interesting.
         Examples: "Next.js 15", "Anthropic Claude 3.5 Sonnet", "Meta Llama 3"
 
         Return ONLY the name. Be specific and real."""
@@ -256,6 +269,7 @@ WHY: [impact/relevance]
             'title': topic_name,
             'url': None,  # No URL available
             'source': 'model_knowledge',
+            'category': 'tech',
             'context': f"Topic: {topic_name}"
         }
 
@@ -533,7 +547,7 @@ CAPTION REQUIREMENTS:
 - Do NOT invent product names, versions, or features beyond what's in the context
 - Must be a COMPLETE sentence ending with punctuation (. ! ?)
 - 100-200 characters total
-- Engaging question or observation for developers
+- Engaging question or observation that sparks discussion
 - NO marketing language ("Unleash", "Revolutionary", etc.)
 - NO hashtags, NO emojis
 
@@ -647,7 +661,7 @@ CAPTION REQUIREMENTS:
 - Do NOT invent product names, versions, or features beyond what's in the context
 - Must be a COMPLETE sentence ending with punctuation (. ! ?)
 - 100-200 characters total
-- Engaging question or observation for developers
+- Engaging question or observation that sparks discussion
 - NO marketing language ("Unleash", "Revolutionary", etc.)
 - NO hashtags, NO emojis
 
