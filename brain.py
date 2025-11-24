@@ -6,6 +6,7 @@ from vertexai.preview.generative_models import grounding
 from vertexai.preview.vision_models import ImageGenerationModel
 from google.cloud import firestore
 from config import Config
+from news_fetcher import NewsFetcher
 import datetime
 import os
 import re
@@ -101,6 +102,10 @@ class AgentBrain:
         self.db = firestore.Client(project=self.project_id)
         self.collection = self.db.collection(Config.COLLECTION_NAME)
 
+        # Initialize news fetcher for real URLs
+        self.news_fetcher = NewsFetcher()
+        logger.info("✓ News fetcher initialized (Hacker News API)")
+
     def _extract_urls(self, text: str) -> list:
         """Extracts all URLs from text."""
         url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
@@ -177,34 +182,30 @@ class AgentBrain:
         # All models failed
         raise RuntimeError(f"All models failed. Last error: {last_error}")
 
-    def _get_trending_topic(self) -> str:
+    def _get_trending_story(self) -> dict:
         """
-        Asks Gemini to identify a trending tech topic.
-        Uses Google Search if available, otherwise relies on model's recent knowledge.
+        Gets a trending tech story with REAL URL from Hacker News or other sources.
+        Returns dict with {title, url, source}.
         """
-        if self.search_tool:
-            prompt = """Find the single most interesting tech news story RIGHT NOW (last 24 hours).
-            Focus on:
-            - Major AI product launches or updates
-            - Significant open source releases
-            - Big tech industry moves
+        story = self.news_fetcher.get_trending_story()
 
-            Return ONLY the headline/topic name. Be specific."""
-            # Use search tool to get real-time info
-            return self._generate_with_fallback(prompt, tools=[self.search_tool])
-        else:
-            # Without search: ask for recent topics from model's knowledge
-            prompt = """What is a significant tech news or product launch from your recent knowledge?
-            Focus on:
-            - Major AI products (ChatGPT, Claude, Gemini, etc.)
-            - Popular open source projects (React, Next.js, Tailwind, etc.)
-            - Big tech companies (Google, Microsoft, Meta, Apple, etc.)
+        if story:
+            logger.info(f"✓ Found trending story: {story['title'][:50]}...")
+            return story
 
-            Return ONLY a specific product/project name and brief context. Be real and specific.
-            Example: "Anthropic Claude 3 Opus" or "Meta Llama 3" or "OpenAI GPT-4 Turbo"
+        # Fallback: use model to suggest a topic (no URL)
+        logger.warning("Could not fetch real news, falling back to model knowledge")
+        prompt = """Suggest ONE specific, real tech product or project that developers would find interesting.
+        Examples: "Next.js 15", "Anthropic Claude 3.5 Sonnet", "Meta Llama 3"
 
-            Do NOT make up fake products or news."""
-            return self._generate_with_fallback(prompt)
+        Return ONLY the name. Be specific and real."""
+
+        topic_name = self._generate_with_fallback(prompt)
+        return {
+            'title': topic_name,
+            'url': None,  # No URL available
+            'source': 'model_knowledge'
+        }
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     def _check_history(self, topic: str) -> bool:
@@ -275,21 +276,24 @@ class AgentBrain:
         Decides on the content strategy: Text (HN Style), Video (Veo), or Image (Imagen).
         Returns a dict with 'type', 'content', 'topic', and optional 'video_prompt'/'image_path'.
         """
-        topic = self._get_trending_topic()
-        
+        story = self._get_trending_story()
+        topic = story['title']
+        story_url = story.get('url')  # Real URL or None
+
         # Retry logic for duplicates
         if self._check_history(topic):
             logger.info("Duplicate topic detected. Requesting alternative.")
-            prompt = f"""The topic '{topic}' was already covered. Find a DIFFERENT trending tech news story from the last 24 hours.
-                Return ONLY the headline."""
+            # Try to get a different story
             try:
-                new_topic = self._generate_with_fallback(prompt, tools=[self.search_tool])
-                if self._check_history(new_topic):
-                     # Try one more time with explicit instruction
-                     prompt2 = f"Both '{topic}' and '{new_topic}' are taken. Give me a completely random but interesting tech tool or library name."
-                     new_topic = self._generate_with_fallback(prompt2)
-                     
-                topic = new_topic
+                for _ in range(3):  # Try up to 3 times
+                    story = self._get_trending_story()
+                    topic = story['title']
+                    story_url = story.get('url')
+
+                    if not self._check_history(topic):
+                        break
+                else:
+                    logger.warning("All alternatives were duplicates, proceeding with latest")
             except Exception as e:
                 logger.error(f"Failed to find alternative topic: {e}")
                 # Proceed with original topic if fallback fails, better than crashing
@@ -375,49 +379,39 @@ Reply with EXACTLY ONE WORD: VIDEO, IMAGE, or TEXT"""
             strategy["image_prompt"] = visual_prompt
             
         else:
-            # Generate Hacker News Style Post
+            # Generate Hacker News Style Post with REAL URL
             logger.info(f"Generating HN-style post for: {topic}")
 
-            if self.search_tool:
-                # With search grounding - can find real URLs
-                post_prompt = f"""Search Google for recent news about '{topic}' and write an engaging developer-focused tweet.
+            if story_url:
+                # We have a REAL URL from news fetcher!
+                logger.info(f"Using real URL: {story_url}")
+                post_prompt = f"""Write an engaging developer-focused tweet about this story:
 
-CRITICAL REQUIREMENTS:
-1. You MUST use Google Search to find a REAL, working URL about this topic
-2. The URL MUST be from an actual news site, blog, or official announcement
-3. Include the complete URL in your response (starting with https://)
-4. DO NOT make up or hallucinate URLs
-5. Write in this exact format:
+Title: "{topic}"
+URL: {story_url}
 
-[Bold claim or question about the news]
+Format:
+[Bold claim or provocative question about the news]
 
-[REAL URL you found via search]
+{story_url}
 
-[Provocative insight that invites discussion]
+[Technical insight that makes developers want to reply]
 
 CONSTRAINTS:
-- Total length: Under 280 characters
+- Total length: Under 280 characters (including the URL above)
+- Use the EXACT URL provided above
 - NO hashtags, NO emojis
-- If you cannot find a real URL, say "No URL found" instead of making one up
-"""
-                try:
-                    response = self._generate_with_fallback(
-                        post_prompt,
-                        tools=[self.search_tool],
-                        require_url=True
-                    )
-                    tweet = response.strip()
-                except Exception as e:
-                    logger.error(f"Search-based generation failed: {e}, falling back to no-URL mode")
-                    self.search_tool = None  # Disable for this run
+- Make it engaging and slightly provocative
 
-            if not self.search_tool:
-                # Without search grounding - provide known/example URLs
-                logger.info("Generating post WITHOUT URL (search grounding unavailable)")
+Example style: "Finally, a framework that doesn't need 47 config files to start. But will it scale?"
+"""
+            else:
+                # No URL available - text-only tweet
+                logger.info("No URL available, generating text-only post")
                 post_prompt = f"""Write an engaging developer-focused tweet about '{topic}'.
 
 CRITICAL INSTRUCTIONS:
-1. DO NOT include any URLs - we cannot verify them
+1. DO NOT include any URLs - we don't have one
 2. Focus on the technology and its impact
 3. Ask a provocative question or make an interesting observation
 4. Be authentic and don't overhype
@@ -434,23 +428,44 @@ CONSTRAINTS:
 
 Example style: "The new model outperforms GPT-4 on reasoning tasks. But can it actually replace human developers? Probably not yet."
 """
-                try:
-                    response = self._generate_with_fallback(post_prompt)
-                    tweet = response.strip()
-                except Exception as e:
-                    logger.error(f"Failed to generate post: {e}")
-                    raise
+
+            try:
+                response = self._generate_with_fallback(post_prompt)
+                tweet = response.strip()
+
+                # If we have a URL, ensure it's in the tweet
+                if story_url and story_url not in tweet:
+                    logger.warning("Generated tweet missing URL, adding it")
+                    # Try to fit URL in
+                    max_text_len = 280 - len(story_url) - 2  # -2 for spacing
+                    if len(tweet) > max_text_len:
+                        tweet = tweet[:max_text_len-3] + "..."
+                    tweet = f"{tweet}\n\n{story_url}"
+
+            except Exception as e:
+                logger.error(f"Failed to generate post: {e}")
+                raise
 
             # Strict length check
             if len(tweet) > 280:
                 logger.warning(f"Tweet too long ({len(tweet)}), truncating.")
-                tweet = tweet[:277] + "..."
+                # Try to truncate before URL
+                if story_url and story_url in tweet:
+                    parts = tweet.split(story_url)
+                    text_part = parts[0].strip()[:180]  # Leave room for URL
+                    tweet = f"{text_part}...\n\n{story_url}"
+                else:
+                    tweet = tweet[:277] + "..."
 
             # Final validation
             if not tweet or len(tweet) < 10:
-                tweet = f"{topic} is making waves in tech. What's your take?"
+                if story_url:
+                    tweet = f"{topic}\n\n{story_url}\n\nThoughts?"
+                else:
+                    tweet = f"{topic} is making waves in tech. What's your take?"
 
             strategy["content"] = [tweet]
+            strategy["source_url"] = story_url  # Track the source
 
         return strategy
 
