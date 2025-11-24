@@ -546,7 +546,7 @@ CAPTION REQUIREMENTS:
 - Use SPECIFIC details from the article context (numbers, names, features)
 - Do NOT invent product names, versions, or features beyond what's in the context
 - Must be a COMPLETE sentence ending with punctuation (. ! ?)
-- 100-200 characters total
+- 100-175 characters total (leaves room for URL)
 - Engaging question or observation that sparks discussion
 - NO marketing language ("Unleash", "Revolutionary", etc.)
 - NO hashtags, NO emojis
@@ -608,7 +608,11 @@ Now generate for the article above.
                         logger.warning(f"Caption seems incomplete: {caption_part}")
                         caption_part = f"{caption_part}. What's your take?"
 
-                    caption = caption_part[:200]  # Enforce max length
+                    # Reserve space for URL if needed (Twitter limit 280 chars)
+                    # Estimate URL space: typical URL ~100 chars + "\n\n" = 104 chars
+                    # So caption should be max 175 chars to leave room
+                    max_caption_len = 175 if story_url else 280
+                    caption = caption_part[:max_caption_len]
 
                     # Validate visual prompt is detailed enough
                     if len(visual_prompt) < 50:
@@ -627,12 +631,12 @@ Now generate for the article above.
             # For video posts with URL, add URL to caption for citation
             if story_url:
                 if story_url not in caption:
-                    # Add URL to caption
-                    if len(caption) + len(story_url) + 4 <= 200:  # 4 for "\n\n"
+                    # Add URL to caption (Twitter limit is 280 chars)
+                    if len(caption) + len(story_url) + 4 <= 280:  # 4 for "\n\n" and buffer
                         caption = f"{caption}\n\n{story_url}"
                     else:
-                        # Truncate caption to fit URL
-                        max_cap_len = 200 - len(story_url) - 7  # 7 for "...\n\n"
+                        # Truncate caption to fit URL within 280 char limit
+                        max_cap_len = 280 - len(story_url) - 7  # 7 for "...\n\n"
                         caption = f"{caption[:max_cap_len]}...\n\n{story_url}"
                     logger.info(f"Added URL to video caption: {story_url}")
 
@@ -660,20 +664,25 @@ CAPTION REQUIREMENTS:
 - Use SPECIFIC details from the article context (numbers, names, features)
 - Do NOT invent product names, versions, or features beyond what's in the context
 - Must be a COMPLETE sentence ending with punctuation (. ! ?)
-- 100-200 characters total
+- 100-175 characters total (leaves room for URL)
 - Engaging question or observation that sparks discussion
 - NO marketing language ("Unleash", "Revolutionary", etc.)
 - NO hashtags, NO emojis
 
 PROMPT REQUIREMENTS FOR IMAGE (IMPORTANT - BE SPECIFIC TO THE ARTICLE):
 - Visual description for image generator (Imagen) based on ACTUAL article content
-- Should represent the SPECIFIC technology/product/concept from the article
+- Must DIRECTLY represent the SPECIFIC feature/product/technology mentioned in article
 - Use tech photography or technical illustration style
-- Include specific visual elements mentioned or implied in the article context
+- Include specific visual elements that MATCH the article's key feature/concept
 - 80-150 characters with concrete details
-- Reference actual products, logos, interfaces from the article
+- Reference actual products, logos, interfaces, interactions from the article
+- CRITICAL: Image must visually show what the article is about, not generic tech imagery
 
 EXAMPLES USING ARTICLE CONTEXT:
+If article says "Gemini lets you tap on image parts for definitions":
+CAPTION: "Gemini now lets you tap image parts for definitions. How can this deepen learning?"
+PROMPT: "Smartphone screen showing Gemini app with an educational image, finger tapping on a specific object, definition popup appearing with explanation text, interactive UI elements glowing"
+
 If article says "New MacBook Pro M4 chip benchmarks leaked":
 CAPTION: "M4 MacBook Pro benchmarks just leaked. 30% faster than M3. Worth the upgrade?"
 PROMPT: "Professional product photo of MacBook Pro with glowing M4 chip visualization, performance graphs floating above screen showing 30% increase, dramatic tech lighting"
@@ -707,7 +716,18 @@ Now generate for the article above.
                         logger.warning(f"Caption seems incomplete: {caption_part}")
                         caption_part = f"{caption_part}. What's your take?"
 
-                    caption = caption_part[:200]  # Enforce max length
+                    # Reserve space for URL if needed (Twitter limit 280 chars)
+                    # Estimate URL space: typical URL ~100 chars + "\n\n" = 104 chars
+                    # So caption should be max 175 chars to leave room
+                    max_caption_len = 175 if story_url else 280
+                    caption = caption_part[:max_caption_len]
+
+                    # Validate image prompt is detailed enough and specific
+                    if len(visual_prompt) < 50:
+                        logger.warning(f"Image prompt too short ({len(visual_prompt)} chars): {visual_prompt}")
+                        raise ValueError(f"Image prompt must be at least 50 characters, got {len(visual_prompt)}")
+
+                    logger.info(f"Image prompt: {visual_prompt[:100]}...")
                 else:
                     logger.error("Response missing CAPTION: or PROMPT: markers")
                     raise ValueError("Invalid format - missing CAPTION or PROMPT")
@@ -719,12 +739,12 @@ Now generate for the article above.
             # For image posts with URL, add URL to caption for citation
             if story_url:
                 if story_url not in caption:
-                    # Add URL to caption
-                    if len(caption) + len(story_url) + 4 <= 200:  # 4 for "\n\n"
+                    # Add URL to caption (Twitter limit is 280 chars)
+                    if len(caption) + len(story_url) + 4 <= 280:  # 4 for "\n\n" and buffer
                         caption = f"{caption}\n\n{story_url}"
                     else:
-                        # Truncate caption to fit URL
-                        max_cap_len = 200 - len(story_url) - 7  # 7 for "...\n\n"
+                        # Truncate caption to fit URL within 280 char limit
+                        max_cap_len = 280 - len(story_url) - 7  # 7 for "...\n\n"
                         caption = f"{caption[:max_cap_len]}...\n\n{story_url}"
                     logger.info(f"Added URL to image caption: {story_url}")
 
