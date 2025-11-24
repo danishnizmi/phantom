@@ -107,13 +107,26 @@ def main():
                 
             except Exception as e:
                 logger.error(f"Video generation or upload failed: {e}")
-                logger.info("Falling back to text thread...")
-                
-                # Fallback logic
+                logger.info("Falling back to text with URL...")
+
+                # Fallback logic - post text with URL (if available)
                 try:
-                    fallback_text = f"{strategy['content']} (Check back later for the video!)"
+                    caption = strategy['content']
+                    source_url = strategy.get('source_url')
+
+                    # If we have a URL, create proper fallback with citation
+                    if source_url:
+                        fallback_text = f"{caption}\n\n{source_url}"
+                        # Ensure under 280 chars
+                        if len(fallback_text) > 280:
+                            max_caption = 280 - len(source_url) - 4  # -4 for \n\n spacing
+                            fallback_text = f"{caption[:max_caption]}...\n\n{source_url}"
+                    else:
+                        fallback_text = caption
+
                     post_tweet_v2(client_v2, text=fallback_text)
-                    brain.log_post(strategy, success=False, error=f"Video failed, posted text. Error: {e}")
+                    logger.info("Posted text with URL after video failure")
+                    brain.log_post(strategy, success=True, error=f"Video failed but posted text with URL. Error: {e}")
                 except Exception as fallback_error:
                     logger.error(f"Fallback tweet also failed: {fallback_error}")
                     brain.log_post(strategy, success=False, error=f"Video and Fallback failed. Error: {e} | Fallback: {fallback_error}")
@@ -143,11 +156,28 @@ def main():
                 
             except Exception as e:
                 logger.error(f"Image generation or upload failed: {e}")
-                # Fallback to text
+                logger.info("Falling back to text with URL...")
+
+                # Fallback to text with URL
                 try:
-                    post_tweet_v2(client_v2, text=strategy["content"])
-                    brain.log_post(strategy, success=False, error=f"Image failed, posted text. Error: {e}")
+                    caption = strategy['content']
+                    source_url = strategy.get('source_url')
+
+                    # If we have a URL, create proper fallback with citation
+                    if source_url:
+                        fallback_text = f"{caption}\n\n{source_url}"
+                        # Ensure under 280 chars
+                        if len(fallback_text) > 280:
+                            max_caption = 280 - len(source_url) - 4  # -4 for \n\n spacing
+                            fallback_text = f"{caption[:max_caption]}...\n\n{source_url}"
+                    else:
+                        fallback_text = caption
+
+                    post_tweet_v2(client_v2, text=fallback_text)
+                    logger.info("Posted text with URL after image failure")
+                    brain.log_post(strategy, success=True, error=f"Image failed but posted text with URL. Error: {e}")
                 except Exception as fallback_error:
+                    logger.error(f"Fallback tweet also failed: {fallback_error}")
                     brain.log_post(strategy, success=False, error=f"Image and Fallback failed. Error: {e}")
                     sys.exit(1)
             finally:

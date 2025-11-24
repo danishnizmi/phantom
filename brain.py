@@ -289,12 +289,13 @@ CRITICAL VALIDATION - BE VERY STRICT:
 EXAMPLES OF WHAT TO REJECT:
 - "Unleash your creative vision with [product]" ❌ Marketing language
 - Mentions products not in the original topic ❌ Made up
-- "Check back later for video!" ❌ Irrelevant filler
+- "Check back later for video/updates!" ❌ Placeholder text
 - Any "Pro" or version numbers not in topic ❌ Fabricated
+- News posts without URLs when URL is available ❌ Missing citation
 
 EXAMPLES OF WHAT TO APPROVE:
-- "New AI model from [company in topic]. Can it handle production workloads?" ✅
-- "[Real product from topic] launches today. But will developers actually use it?" ✅
+- "New AI model. Can it handle production?\n\nhttps://..." ✅ Has URL
+- "[Real product] launches today. Will devs use it?" ✅ Real, engaging
 
 DECISION (BE STRICT - WHEN IN DOUBT, REJECT):
 Reply EXACTLY:
@@ -474,16 +475,18 @@ PROMPT REQUIREMENTS:
 - Tech-focused, developer-oriented visuals
 - 50-100 characters
 
-BAD Example (makes stuff up):
-CAPTION: Unleash creativity with Nano Banana Pro! ❌ FAKE PRODUCT
-PROMPT: Marketing video
+BAD Examples (NEVER DO THIS):
+❌ "Unleash creativity with Nano Banana Pro!"
+❌ "Check back later for the video!"
+❌ Any filler text about waiting
 
-GOOD Example (real, engaging):
-CAPTION: New AI model from Google. Can it actually replace developers? ✅ REAL
-PROMPT: Tech demo showing code generation on dark IDE
+GOOD Examples:
+✅ "New AI model from Google. Can it replace developers?"
+✅ "Latest chip promises 10x speedup. Will it deliver?"
+
+CRITICAL: Write COMPLETE, STANDALONE caption. NO placeholder text!
 
 Now generate for: '{topic}'
-Remember: Write about THIS topic only. No fake products!
 
             try:
                 response = self._generate_with_fallback(script_prompt)
@@ -507,6 +510,18 @@ Remember: Write about THIS topic only. No fake products!
             except Exception as e:
                 logger.error(f"Failed to generate video script: {e}")
                 raise
+
+            # For video posts with URL, add URL to caption for citation
+            if story_url:
+                if story_url not in caption:
+                    # Add URL to caption
+                    if len(caption) + len(story_url) + 4 <= 200:  # 4 for "\n\n"
+                        caption = f"{caption}\n\n{story_url}"
+                    else:
+                        # Truncate caption to fit URL
+                        max_cap_len = 200 - len(story_url) - 7  # 7 for "...\n\n"
+                        caption = f"{caption[:max_cap_len]}...\n\n{story_url}"
+                    logger.info(f"Added URL to video caption: {story_url}")
 
             strategy["content"] = caption
             strategy["video_prompt"] = visual_prompt
@@ -535,16 +550,18 @@ PROMPT REQUIREMENTS:
 - Tech photography or illustration style
 - 50-100 characters
 
-BAD Example (makes stuff up):
-CAPTION: Unleash creativity with Gemini 3 Pro Image! ❌ FAKE VERSION
-PROMPT: Marketing image
+BAD Examples (NEVER DO THIS):
+❌ "Unleash creativity with Gemini 3 Pro Image!"
+❌ "Check back later for updates!"
+❌ Any placeholder or filler text
 
-GOOD Example (real, engaging):
-CAPTION: OpenAI releases new vision model. Can it debug CSS layouts? ✅ REAL
-PROMPT: AI analyzing code on screen, tech photography, dark theme, 16:9
+GOOD Examples:
+✅ "OpenAI's new vision model. Can it debug CSS layouts?"
+✅ "AI chip promises 10x gains. But at what cost?"
+
+CRITICAL: Write COMPLETE, STANDALONE caption. NO placeholder text!
 
 Now generate for: '{topic}'
-Remember: Write about THIS topic only. No fake products or versions!
 
             try:
                 response = self._generate_with_fallback(script_prompt)
@@ -569,9 +586,21 @@ Remember: Write about THIS topic only. No fake products or versions!
                 logger.error(f"Failed to generate image script: {e}")
                 raise
 
+            # For image posts with URL, add URL to caption for citation
+            if story_url:
+                if story_url not in caption:
+                    # Add URL to caption
+                    if len(caption) + len(story_url) + 4 <= 200:  # 4 for "\n\n"
+                        caption = f"{caption}\n\n{story_url}"
+                    else:
+                        # Truncate caption to fit URL
+                        max_cap_len = 200 - len(story_url) - 7  # 7 for "...\n\n"
+                        caption = f"{caption[:max_cap_len]}...\n\n{story_url}"
+                    logger.info(f"Added URL to image caption: {story_url}")
+
             strategy["content"] = caption
             strategy["image_prompt"] = visual_prompt
-            
+
         else:
             # Generate Hacker News Style Post with REAL URL
             logger.info(f"Generating HN-style post for: {topic}")
