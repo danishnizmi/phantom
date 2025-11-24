@@ -220,3 +220,22 @@ class NewsFetcher:
             return response.status_code < 400
         except Exception:
             return False
+
+    def fetch_article_content(self, url: str) -> str:
+        """
+        Fetches the article content from a URL.
+        Returns the raw HTML content or empty string if failed.
+        """
+        try:
+            logger.info(f"Fetching article content from: {url[:80]}...")
+            response = self.session.get(url, timeout=10, allow_redirects=True)
+            response.raise_for_status()
+
+            # Return first 50KB of content (enough for context, not too much)
+            content = response.text[:50000]
+            logger.info(f"Fetched {len(content)} chars from article")
+            return content
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch article content: {e}")
+            return ""

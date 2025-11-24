@@ -182,15 +182,66 @@ class AgentBrain:
         # All models failed
         raise RuntimeError(f"All models failed. Last error: {last_error}")
 
+    def _extract_article_context(self, title: str, url: str, html_content: str) -> str:
+        """
+        Extracts key context from article content using AI.
+        Returns a concise summary of key points for media generation.
+        """
+        if not html_content or len(html_content) < 100:
+            logger.warning("No article content available, using title only")
+            return f"Article: {title}"
+
+        # Ask AI to extract key technical details
+        context_prompt = f"""Extract the KEY TECHNICAL DETAILS from this article for creating engaging media content.
+
+ARTICLE TITLE: {title}
+ARTICLE CONTENT (HTML):
+{html_content[:8000]}
+
+Extract and return ONLY:
+1. Main announcement/news (1 sentence)
+2. Key technical details or specs (2-3 bullet points)
+3. Why developers/tech audience should care (1 sentence)
+
+Be SPECIFIC - include numbers, names, technical terms from the article.
+Keep total output under 400 characters.
+
+Format:
+NEWS: [main point]
+DETAILS:
+- [specific detail 1]
+- [specific detail 2]
+- [specific detail 3]
+WHY: [impact/relevance]
+"""
+
+        try:
+            context = self._generate_with_fallback(context_prompt)
+            logger.info(f"Extracted article context: {context[:100]}...")
+            return context
+        except Exception as e:
+            logger.warning(f"Failed to extract context: {e}, using title only")
+            return f"Article: {title}"
+
     def _get_trending_story(self) -> dict:
         """
         Gets a trending tech story with REAL URL from Hacker News or other sources.
-        Returns dict with {title, url, source}.
+        Fetches article content for rich context.
+        Returns dict with {title, url, source, context}.
         """
         story = self.news_fetcher.get_trending_story()
 
         if story:
             logger.info(f"✓ Found trending story: {story['title'][:50]}...")
+
+            # Fetch article content for context
+            if story.get('url'):
+                html_content = self.news_fetcher.fetch_article_content(story['url'])
+                context = self._extract_article_context(story['title'], story['url'], html_content)
+                story['context'] = context
+            else:
+                story['context'] = f"Article: {story['title']}"
+
             return story
 
         # Fallback: use model to suggest a topic (no URL)
@@ -204,7 +255,8 @@ class AgentBrain:
         return {
             'title': topic_name,
             'url': None,  # No URL available
-            'source': 'model_knowledge'
+            'source': 'model_knowledge',
+            'context': f"Topic: {topic_name}"
         }
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
@@ -390,6 +442,7 @@ Does it relate to actual topic "{topic}"? Are all claims real?
         story = self._get_trending_story()
         topic = story['title']
         story_url = story.get('url')  # Real URL or None
+        story_context = story.get('context', f"Article: {topic}")  # Rich context from article
 
         # Retry logic for duplicates
         if self._check_history(topic):
@@ -400,6 +453,7 @@ Does it relate to actual topic "{topic}"? Are all claims real?
                     story = self._get_trending_story()
                     topic = story['title']
                     story_url = story.get('url')
+                    story_context = story.get('context', f"Article: {topic}")
 
                     if not self._check_history(topic):
                         break
@@ -408,8 +462,9 @@ Does it relate to actual topic "{topic}"? Are all claims real?
             except Exception as e:
                 logger.error(f"Failed to find alternative topic: {e}")
                 # Proceed with original topic if fallback fails, better than crashing
-        
+
         logger.info(f"Selected Topic: {topic}")
+        logger.info(f"Article Context: {story_context[:150]}...")
 
         # Decide format
         if Config.BUDGET_MODE:
@@ -452,65 +507,77 @@ Reply with EXACTLY ONE WORD: VIDEO, IMAGE, or TEXT"""
         }
 
         if post_type == "video":
-            # Generate Video Prompt and Tweet Text
+            # Generate Video Prompt and Tweet Text with FULL article context
             # Determine if this needs an explainer video or a hook video
-            script_prompt = f"""Generate a tweet with video for THIS EXACT TOPIC: '{topic}'
+            script_prompt = f"""Generate a tweet with video for THIS EXACT NEWS STORY.
 
-CRITICAL WARNING: You MUST write about THIS EXACT topic. DO NOT make up fake products or features!
+ARTICLE CONTEXT (READ CAREFULLY - USE THIS INFO):
+{story_context}
+
+ARTICLE TITLE: {topic}
+SOURCE URL: {story_url if story_url else 'No URL'}
+
+CRITICAL WARNING: You MUST write about THIS EXACT article using the context above. DO NOT make up fake products or features!
 
 VIDEO TYPE DECISION:
-- If topic involves a process, algorithm, or how something works → EXPLAINER video
-- If topic is breaking news, announcement, or debate → HOOK video
+- If article involves a process, algorithm, or how something works → EXPLAINER video
+- If article is breaking news, announcement, or debate → HOOK video
 
 You MUST provide BOTH parts in this EXACT format:
 CAPTION: <your complete tweet text here>
 PROMPT: <your detailed visual description here>
 
 CAPTION REQUIREMENTS:
-- Must reference the ACTUAL topic: '{topic}'
-- Do NOT invent product names, versions, or features
+- Must reference the ACTUAL article content from context above
+- Use SPECIFIC details from the article context (numbers, names, features)
+- Do NOT invent product names, versions, or features beyond what's in the context
 - Must be a COMPLETE sentence ending with punctuation (. ! ?)
 - 100-200 characters total
 - Engaging question or observation for developers
 - NO marketing language ("Unleash", "Revolutionary", etc.)
 - NO hashtags, NO emojis
 
-PROMPT REQUIREMENTS FOR VIDEO (IMPORTANT - BE DETAILED):
+PROMPT REQUIREMENTS FOR VIDEO (IMPORTANT - BE DETAILED AND SPECIFIC TO THE ARTICLE):
 
 For EXPLAINER videos (processes, how-to, algorithms):
-- Describe a clear visual sequence showing the process step-by-step
-- Include diagrams, flowcharts, or code snippets being animated
-- Show before/after states or transformations
+- Describe a clear visual sequence showing the SPECIFIC process from the article
+- Include diagrams, flowcharts, or code related to the ACTUAL technology mentioned
+- Show before/after states or transformations SPECIFIC to the article
+- Use actual numbers/metrics from the article context
 - Example: "Animated flowchart showing data moving through neural network layers, with nodes lighting up sequentially as computation progresses, ending with output prediction appearing"
 
 For HOOK videos (news, announcements, debates):
-- Start with attention-grabbing visual (e.g., logo reveal, dramatic text)
-- Include relevant tech imagery (servers, code, interfaces, graphics)
-- Create visual intrigue that makes viewers want to learn more
-- Example: "Zoom into glowing AI chip with circuit patterns, transition to split-screen comparison of old vs new performance graphs, end on provocative question mark"
+- Start with attention-grabbing visual related to the ACTUAL company/product in the article
+- Include relevant tech imagery specific to what's described in the context
+- Create visual intrigue based on the REAL story details
+- Use actual logos, products, or visuals mentioned in the context
+- Example: "Zoom into glowing AI chip with circuit patterns, transition to split-screen comparison of old vs new performance graphs showing 2x speedup, end on provocative question mark"
 
 PROMPT SHOULD BE:
-- 100-200 characters (detailed and specific)
-- Cinematically interesting
-- Technically relevant to the topic
+- 100-200 characters (detailed and specific to THIS article)
+- Cinematically interesting but FACTUAL to the article
+- Technically relevant using details from the context
 - Actually achievable by a video generator
+- References REAL specs, numbers, or details from the article
 
 BAD Examples (NEVER DO THIS):
-X "Unleash creativity with Nano Banana Pro!"
-X "Check back later for the video!"
-X "Tech-focused, developer-oriented visuals" (too generic)
-X "Cool AI stuff" (not specific enough)
+X "Unleash creativity with Nano Banana Pro!" (made up product)
+X "Check back later for the video!" (placeholder)
+X "Tech-focused, developer-oriented visuals" (too generic, not specific to article)
+X "Cool AI stuff" (not specific enough, ignores article context)
 
-GOOD Examples:
-EXPLAINER: "New transformer architecture explained. How does it cut training time in half?"
-PROMPT: "Animated diagram of transformer architecture with attention heads lighting up, data flowing through layers, comparison chart showing 50% faster training time"
+GOOD Examples (USING ARTICLE CONTEXT):
+If article says "GPT-5 reduces hallucinations by 40%":
+CAPTION: "GPT-5 cuts hallucinations by 40%. Is this the reliability breakthrough?"
+PROMPT: "Split screen showing GPT-4 vs GPT-5 accuracy charts, bars rising to show 40% improvement, transition to checkmark appearing over error-prone outputs"
 
-HOOK: "OpenAI just dropped something big. Will it change everything?"
-PROMPT: "Dramatic zoom on OpenAI logo emerging from digital particles, cut to reaction shots of surprised developers at computers, end with pulsing question mark"
+If article says "Rust adoption grows 67% among Fortune 500":
+CAPTION: "Fortune 500 companies went 67% more Rust this year. Memory safety paying off?"
+PROMPT: "Animated bar chart racing showing programming language adoption, Rust bar surging 67% upward past other languages, corporate logos appearing on rising bar"
 
-CRITICAL: Write COMPLETE, STANDALONE caption. NO placeholder text!
+CRITICAL: Write COMPLETE, STANDALONE caption using REAL details from the article context. NO placeholder text!
 
-Now generate for: '{topic}'
+Now generate for the article above.
 """
 
             try:
@@ -559,41 +626,57 @@ Now generate for: '{topic}'
             strategy["video_prompt"] = visual_prompt
 
         elif post_type == "image":
-            # Generate Image Prompt and Tweet Text
-            script_prompt = f"""Generate a tweet with image for THIS EXACT TOPIC: '{topic}'
+            # Generate Image Prompt and Tweet Text with FULL article context
+            script_prompt = f"""Generate a tweet with image for THIS EXACT NEWS STORY.
 
-CRITICAL WARNING: You MUST write about THIS EXACT topic. DO NOT make up fake products or features!
+ARTICLE CONTEXT (READ CAREFULLY - USE THIS INFO):
+{story_context}
+
+ARTICLE TITLE: {topic}
+SOURCE URL: {story_url if story_url else 'No URL'}
+
+CRITICAL WARNING: You MUST write about THIS EXACT article using the context above. DO NOT make up fake products or features!
 
 You MUST provide BOTH parts in this EXACT format:
 CAPTION: <your complete tweet text here>
-PROMPT: <your visual description here>
+PROMPT: <your detailed visual description here>
 
 CAPTION REQUIREMENTS:
-- Must reference the ACTUAL topic: '{topic}'
-- Do NOT invent product names, versions, or features
+- Must reference the ACTUAL article content from context above
+- Use SPECIFIC details from the article context (numbers, names, features)
+- Do NOT invent product names, versions, or features beyond what's in the context
 - Must be a COMPLETE sentence ending with punctuation (. ! ?)
 - 100-200 characters total
 - Engaging question or observation for developers
 - NO marketing language ("Unleash", "Revolutionary", etc.)
 - NO hashtags, NO emojis
 
-PROMPT REQUIREMENTS:
-- Visual description for image generator (Imagen)
-- Tech photography or illustration style
-- 50-100 characters
+PROMPT REQUIREMENTS FOR IMAGE (IMPORTANT - BE SPECIFIC TO THE ARTICLE):
+- Visual description for image generator (Imagen) based on ACTUAL article content
+- Should represent the SPECIFIC technology/product/concept from the article
+- Use tech photography or technical illustration style
+- Include specific visual elements mentioned or implied in the article context
+- 80-150 characters with concrete details
+- Reference actual products, logos, interfaces from the article
+
+EXAMPLES USING ARTICLE CONTEXT:
+If article says "New MacBook Pro M4 chip benchmarks leaked":
+CAPTION: "M4 MacBook Pro benchmarks just leaked. 30% faster than M3. Worth the upgrade?"
+PROMPT: "Professional product photo of MacBook Pro with glowing M4 chip visualization, performance graphs floating above screen showing 30% increase, dramatic tech lighting"
+
+If article says "GitHub Copilot now writes entire functions":
+CAPTION: "GitHub Copilot now writes full functions. Are junior devs obsolete?"
+PROMPT: "Split screen showing code editor with GitHub Copilot logo, left side showing developer typing partial code, right side auto-completing entire function, sleek modern tech aesthetic"
 
 BAD Examples (NEVER DO THIS):
-X "Unleash creativity with Gemini 3 Pro Image!"
-X "Check back later for updates!"
+X "Unleash creativity with Gemini 3 Pro Image!" (made up, marketing)
+X "Check back later for updates!" (placeholder)
+X "Tech photography" (too generic, not specific to article)
 X Any placeholder or filler text
 
-GOOD Examples:
-OK "OpenAI's new vision model. Can it debug CSS layouts?"
-OK "AI chip promises 10x gains. But at what cost?"
+CRITICAL: Write COMPLETE, STANDALONE caption using REAL details from the article context. NO placeholder text!
 
-CRITICAL: Write COMPLETE, STANDALONE caption. NO placeholder text!
-
-Now generate for: '{topic}'
+Now generate for the article above.
 """
 
             try:
