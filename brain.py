@@ -342,6 +342,15 @@ WHY: [impact/relevance to {target_audience}]
         ]
 
         content_lower = content_text.lower()
+
+        # Check for style labels leaking into content
+        if content_text.startswith("Style") or content_text.startswith("**Style") or "Style A:" in content_text or "Style B:" in content_text or "Style C:" in content_text:
+            logger.warning(f"Pre-validation REJECT: Style label leaked into content: {content_text}")
+            return {
+                'valid': False,
+                'reason': "Style label leaked into tweet content. Must write tweet directly without labels."
+            }
+
         for phrase in formal_phrases:
             if phrase in content_lower:
                 logger.warning(f"Pre-validation REJECT: Found formal phrase '{phrase}' in: {content_text}")
@@ -840,24 +849,27 @@ URL: {story_url}
 
 TONE: Sound HUMAN and CASUAL, not like a bot or corporate account. Be conversational.
 
-STRUCTURE (pick ONE style):
+IMPORTANT: Just write the tweet directly. DO NOT include style labels like "Style A:", "Style B:", etc.
 
-Style A - Statement + Short reaction:
-"[Bold statement about the news]. [Short punchy reaction or observation]."
+Pick ONE of these approaches (but don't label it):
 
-Style B - Fact + Skeptical/curious take:
-"[Interesting fact from article]. [Slightly skeptical or curious comment]."
+Approach 1 - Statement + Short reaction:
+"[Bold statement]. [Short punchy reaction]."
 
-Style C - Direct observation:
-"[What's happening]. [Why it matters or what's interesting]."
+Approach 2 - Fact + Skeptical take:
+"[Interesting fact]. [Slightly skeptical comment]."
+
+Approach 3 - Direct observation:
+"[What's happening]. [Why it matters]."
 
 CONSTRAINTS:
 - Total: Under 280 chars (including URL)
 - Use EXACT URL provided: {story_url}
 - NO hashtags, NO emojis
+- NO style labels ("Style A:", "**Style B:**", etc.)
 - NO formal questions like "How will this impact..." or "What does this mean for..."
-- NO "We" or "Check out" or "Read more" - just tweet the news naturally
-- Sound like a smart person sharing something interesting, not a news bot
+- NO "We" or "Check out" or "Read more"
+- Just write the tweet directly, nothing else
 
 GOOD Examples (SHORT, PUNCHY, CASUAL):
 "OpenAI and Foxconn building AI factories in the US. About time chip production came home."
