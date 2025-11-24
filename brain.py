@@ -338,7 +338,15 @@ WHY: [impact/relevance to {target_audience}]
             "check out",
             "read more",
             "bringing more tech production",
-            "tech production stateside"
+            "tech production stateside",
+            ", honestly",
+            "honestly.",
+            ", frankly",
+            "frankly.",
+            "to be honest",
+            "if i'm being honest",
+            ", really",
+            "really."
         ]
 
         # US-centric phrases to reject (bot is Australian, should be global)
