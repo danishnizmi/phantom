@@ -1,7 +1,8 @@
 import logging
 import vertexai
 from google.cloud import aiplatform
-from vertexai.generative_models import GenerativeModel, Tool, GoogleSearchRetrieval
+from vertexai.generative_models import GenerativeModel, Tool
+from google.cloud.aiplatform_v1.types import GoogleSearchRetrieval
 from vertexai.preview.vision_models import ImageGenerationModel
 from google.cloud import firestore
 from config import Config
