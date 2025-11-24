@@ -12,6 +12,8 @@ sys.modules["google.cloud"] = MagicMock()
 sys.modules["google.cloud.firestore"] = MagicMock()
 sys.modules["vertexai"] = MagicMock()
 sys.modules["vertexai.generative_models"] = MagicMock()
+sys.modules["vertexai.preview"] = MagicMock()
+sys.modules["vertexai.preview.vision_models"] = MagicMock()
 
 from brain import AgentBrain
 
@@ -39,8 +41,9 @@ class TestAgentBrain(unittest.TestCase):
         self.mock_model_instance.generate_content.side_effect = Exception("API Error")
         
         # Test fallback
-        topic = self.brain._get_trending_topic()
-        self.assertEqual(topic, "Artificial Intelligence")
+        # Test fallback - now expects exception as _generate_with_fallback raises RuntimeError when all fail
+        with self.assertRaises(RuntimeError):
+            self.brain._get_trending_topic()
 
     def test_check_history_duplicate(self):
         # Setup mock Firestore

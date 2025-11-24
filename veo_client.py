@@ -14,7 +14,9 @@ class VeoClient:
             
         self.project_id = project_id
         self.region = region
-        self.base_url = f"https://{region}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{region}/publishers/google/models/veo-3.1-generate-001:predict"
+        self.project_id = project_id
+        self.region = region
+        # Base URL is set dynamically in generate_video based on the specific model version needed
         
         try:
             self.credentials, _ = google.auth.default()
@@ -106,6 +108,11 @@ class VeoClient:
                         bucket = storage_client.bucket(bucket_name)
                         blob = bucket.blob(blob_name)
                         blob.download_to_filename(output_path)
+                        
+                        # Validate video file
+                        if os.path.getsize(output_path) == 0:
+                            raise ValueError("Generated video file is empty")
+                            
                         print(f"Video saved to {output_path}")
                         return output_path
                     else:

@@ -1,11 +1,13 @@
 import logging
 import vertexai
+from google.cloud import aiplatform
 from vertexai.generative_models import GenerativeModel, Tool, GoogleSearchRetrieval
 from vertexai.preview.vision_models import ImageGenerationModel
 from google.cloud import firestore
 from config import Config
 import datetime
 import os
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -31,7 +33,23 @@ class AgentBrain:
             "gemini-2.0-flash-001",
             "gemini-2.0-flash-lite-001",
             "gemini-2.5-pro",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
         ]
+        
+        # Dynamic Discovery: Try to fetch models from GCP (e.g. tuned models)
+        try:
+            aiplatform.init(project=self.project_id, location=self.location)
+            # List models with "gemini" in the name
+            gcp_models = aiplatform.Model.list(filter='display_name:"gemini*"')
+            for m in gcp_models:
+                # Use resource name or display name
+                # Foundation models might not appear here, but tuned ones will
+                if m.display_name not in candidate_models:
+                    candidate_models.append(m.display_name)
+                    logger.info(f"Discovered GCP model: {m.display_name}")
+        except Exception as e:
+            logger.warning(f"Could not list GCP models (using default candidates): {e}")
         
         self.model_names = []
         self.models = {}
@@ -113,6 +131,7 @@ class AgentBrain:
         # Use search tool to get real-time info
         return self._generate_with_fallback(prompt, tools=[self.search_tool])
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     def _check_history(self, topic: str) -> bool:
         """
         Checks Firestore to see if we've recently posted about this topic.

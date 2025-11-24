@@ -1,5 +1,8 @@
 import os
 from google.cloud import secretmanager
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Config:
     PROJECT_ID = os.getenv("PROJECT_ID")
@@ -42,6 +45,6 @@ def get_secret(secret_id: str, project_id: str = None) -> str:
         return response.payload.data.decode("UTF-8")
     except Exception as e:
         # Log error but don't print sensitive info if possible
-        # Using print for now as logging is configured in main/brain
-        print(f"Error fetching secret {secret_id}: {e}")
+        # Log error but don't print sensitive info if possible
+        logger.error(f"Error fetching secret {secret_id}: {e}")
         raise

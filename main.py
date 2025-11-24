@@ -8,7 +8,11 @@ from brain import AgentBrain
 from veo_client import VeoClient
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger(__name__)
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=4, max=60))
@@ -150,7 +154,7 @@ def main():
                 if image_path and os.path.exists(image_path):
                     try:
                         os.remove(image_path)
-                    except:
+                    except Exception:
                         pass
 
         elif strategy["type"] in ["thread", "text"]:
