@@ -318,6 +318,38 @@ WHY: [impact/relevance to {target_audience}]
 
         # Build validation prompt with STRICT reality checks
         content_text = content[0] if isinstance(content, list) else content
+
+        # Pre-validation: Quick regex check for common formal/robotic phrases
+        formal_phrases = [
+            "feels like a big step",
+            "feels like a",
+            "seems like a",
+            "appears to be",
+            "could be a game changer",
+            "might be the",
+            "how will this impact",
+            "what does this mean for",
+            "this could revolutionize",
+            "towards bringing",
+            "in an effort to",
+            "looking forward to",
+            "excited to announce",
+            "we're pleased to",
+            "check out",
+            "read more",
+            "bringing more tech production",
+            "tech production stateside"
+        ]
+
+        content_lower = content_text.lower()
+        for phrase in formal_phrases:
+            if phrase in content_lower:
+                logger.warning(f"Pre-validation REJECT: Found formal phrase '{phrase}' in: {content_text}")
+                return {
+                    'valid': False,
+                    'reason': f"Too formal/robotic - contains phrase '{phrase}'. Need casual, punchy tone like 'About time.' or 'Finally.'"
+                }
+
         validation_prompt = f"""You are a STRICT quality control AI. Your job is to REJECT fake, made-up, or misleading content.
 
 ACTUAL NEWS STORY:
@@ -347,21 +379,29 @@ CRITICAL VALIDATION - BE VERY STRICT:
    - Must be full sentences
    - Character count: {len(content_text)} (must be 20-280)
 
-4. ✓ Is tone appropriate?
-   - Engaging but NOT promotional
-   - Question-based or provocative, NOT hype
-   - Developer/tech audience, NOT consumer marketing
+4. ✓ Is tone CASUAL and HUMAN (not formal/robotic)?
+   - REJECT if it uses formal phrasing: "Feels like a big step", "towards bringing"
+   - REJECT if it has formal questions: "How will this impact", "What does this mean for"
+   - REJECT if wordy: "bringing more tech production stateside" vs "chip production came home"
+   - APPROVE punchy, direct style: "About time.", "Finally.", "This changes things."
+   - Sound like a real person tweeting, not a corporate account
 
 EXAMPLES OF WHAT TO REJECT:
 - "Unleash your creative vision with [product]" - Marketing language
+- "Feels like a big step towards..." - Too formal/wordy
+- "How will this impact the industry?" - Robotic question
+- "What does this mean for developers?" - Corporate tone
+- "This could revolutionize everything!" - Overhype
 - Mentions products not in the original topic - Made up
 - "Check back later for video/updates!" - Placeholder text
 - Any "Pro" or version numbers not in topic - Fabricated
 - News posts without URLs when URL is available - Missing citation
 
 EXAMPLES OF WHAT TO APPROVE:
-- "New AI model. Can it handle production?\n\nhttps://..." - Has URL
-- "[Real product] launches today. Will devs use it?" - Real, engaging
+- "OpenAI building AI factories in the US. About time chip production came home." - Casual, punchy
+- "GPT-5 cuts hallucinations by 40%. Finally getting somewhere with reliability." - Direct, human
+- "Copilot writes full functions now. Junior dev market about to get interesting." - Conversational
+- "[Real product] launches today. Will devs actually use it?" - Real, engaging (not formal)
 
 DECISION (BE STRICT - WHEN IN DOUBT, REJECT):
 Reply EXACTLY:
@@ -819,18 +859,19 @@ CONSTRAINTS:
 - NO "We" or "Check out" or "Read more" - just tweet the news naturally
 - Sound like a smart person sharing something interesting, not a news bot
 
-GOOD Examples:
+GOOD Examples (SHORT, PUNCHY, CASUAL):
 "OpenAI and Foxconn building AI factories in the US. About time chip production came home."
+"Gemini lets you tap images for instant definitions. Finally."
+"GPT-5 cuts hallucinations by 40%. Guess we're getting somewhere."
+"Rust adoption up 67% at Fortune 500. Memory safety wins."
 
-"Gemini lets you tap images for instant definitions. Finally, a feature that actually makes sense."
-
-"GPT-5 cuts hallucinations by 40%. Guess we're one step closer to trusting these things."
-
-BAD Examples:
-X "How will this impact domestic tech production?" (too formal/robotic)
-X "What does this mean for the future of AI?" (cliche question)
-X "This could revolutionize everything!" (overhype)
-X "Check out this amazing news!" (bot-like)
+BAD Examples (FORMAL/WORDY - NEVER DO THIS):
+X "Feels like a big step towards bringing more tech production stateside" (TOO WORDY)
+X "How will this impact domestic tech production?" (FORMAL QUESTION)
+X "What does this mean for the future of AI?" (ROBOTIC)
+X "This could revolutionize everything!" (OVERHYPE)
+X "We're excited to see..." (CORPORATE)
+X "Looking forward to..." (BOT-LIKE)
 
 Generate the tweet:
 """
