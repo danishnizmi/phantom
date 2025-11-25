@@ -53,61 +53,16 @@ class AgentBrain:
         self.location = Config.REGION
         
         vertexai.init(project=self.project_id, location=self.location)
-        
-        # Multi-model configuration with dynamic discovery
-        # Use current Vertex AI Gemini model versions
-        candidate_models = [
-            "gemini-2.0-flash-001",      # Latest fast model
-            "gemini-1.5-flash-002",      # Stable flash model
-            "gemini-1.5-pro-002",        # Stable pro model
-            "gemini-2.0-flash-exp",      # Experimental flash
-            "gemini-1.5-flash-001",      # Older flash version
-            "gemini-1.5-pro-001",        # Older pro version
-        ]
-        
-        # Dynamic Discovery: Try to fetch models from GCP (e.g. tuned models)
-        try:
-            aiplatform.init(project=self.project_id, location=self.location)
-            # List models with "gemini" in the name
-            gcp_models = aiplatform.Model.list(filter='display_name:"gemini*"')
-            for m in gcp_models:
-                # Use resource name or display name
-                # Foundation models might not appear here, but tuned ones will
-                if m.display_name not in candidate_models:
-                    candidate_models.append(m.display_name)
-                    logger.info(f"Discovered GCP model: {m.display_name}")
-        except Exception as e:
-            logger.warning(f"Could not list GCP models (using default candidates): {e}")
-        
+        aiplatform.init(project=self.project_id, location=self.location)
+
         self.model_names = []
         self.models = {}
-        
-        logger.info("Discovering available Gemini models...")
-        
-        # Test each candidate model to see if it's available
-        for model_name in candidate_models:
-            try:
-                model = GenerativeModel(model_name)
-                # Quick test to verify model is accessible
-                test_response = model.generate_content("Hi", 
-                    generation_config={"max_output_tokens": 5, "temperature": 0})
-                
-                if test_response.text:
-                    self.models[model_name] = model
-                    self.model_names.append(model_name)
-                    logger.info(f"✓ Verified model: {model_name}")
-                else:
-                    logger.warning(f"WARNING {model_name} responded but empty")
-                    
-            except Exception as e:
-                error_str = str(e)
-                if "404" in error_str:
-                    logger.debug(f"✗ {model_name} not available (404)")
-                else:
-                    logger.warning(f"✗ {model_name} failed: {error_str[:80]}")
-        
-        if not self.models:
-            raise RuntimeError(f"No Gemini models available. Tried: {candidate_models}")
+
+        # Dynamic model discovery from Vertex AI
+        candidate_models = self._discover_available_models()
+
+        if not candidate_models:
+            raise RuntimeError("No Gemini models discovered. Check Vertex AI API access.")
 
         logger.info(f"✓ Active models ({len(self.models)}): {self.model_names}")
 
@@ -180,6 +135,129 @@ class AgentBrain:
                 logger.info("✓ Content mixer initialized for varied posting")
             except Exception as e:
                 logger.warning(f"Content mixer not available: {e}")
+
+    def _discover_available_models(self) -> list:
+        """
+        Dynamically discovers available Gemini models from Vertex AI.
+        Queries the API and validates each model works before adding to pool.
+        Returns list of working model names.
+        """
+        import requests
+        from google.auth import default
+        from google.auth.transport.requests import Request
+
+        discovered_models = []
+
+        # Step 1: Try to query Vertex AI Model Garden API for available models
+        logger.info("Discovering available Gemini models from Vertex AI...")
+
+        try:
+            # Get credentials for API call
+            credentials, project = default()
+            credentials.refresh(Request())
+            access_token = credentials.token
+
+            # Query the publisher models endpoint
+            api_url = f"https://{self.location}-aiplatform.googleapis.com/v1/projects/{self.project_id}/locations/{self.location}/publishers/google/models"
+
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
+
+            response = requests.get(api_url, headers=headers, timeout=30)
+
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("models", data.get("publisherModels", []))
+
+                for model in models:
+                    model_name = model.get("name", "").split("/")[-1]
+                    # Filter for Gemini models only
+                    if "gemini" in model_name.lower():
+                        discovered_models.append(model_name)
+                        logger.info(f"  API discovered: {model_name}")
+
+                logger.info(f"API returned {len(discovered_models)} Gemini models")
+            else:
+                logger.warning(f"Model API returned {response.status_code}: {response.text[:200]}")
+
+        except Exception as e:
+            logger.warning(f"Could not query Model Garden API: {e}")
+
+        # Step 2: If API didn't return models, build list from known patterns
+        if not discovered_models:
+            logger.info("Building model list from known Vertex AI patterns...")
+            # These patterns are based on Vertex AI naming conventions
+            # Format: gemini-{version}-{variant}-{release}
+            base_patterns = [
+                # Gemini 2.0 series (latest)
+                "gemini-2.0-flash-001",
+                "gemini-2.0-flash-exp",
+                "gemini-2.0-pro-exp",
+                # Gemini 1.5 series (stable)
+                "gemini-1.5-flash-002",
+                "gemini-1.5-flash-001",
+                "gemini-1.5-pro-002",
+                "gemini-1.5-pro-001",
+                # Experimental variants
+                "gemini-1.5-flash-latest",
+                "gemini-1.5-pro-latest",
+                "gemini-exp-1206",
+            ]
+            discovered_models = base_patterns
+
+        # Step 3: Validate each model actually works
+        logger.info(f"Validating {len(discovered_models)} candidate models...")
+        working_models = []
+
+        for model_name in discovered_models:
+            try:
+                model = GenerativeModel(model_name)
+                # Minimal test - just check model loads and responds
+                test_response = model.generate_content(
+                    "Say OK",
+                    generation_config={"max_output_tokens": 5, "temperature": 0}
+                )
+
+                if test_response and test_response.text:
+                    self.models[model_name] = model
+                    self.model_names.append(model_name)
+                    working_models.append(model_name)
+                    logger.info(f"  ✓ {model_name} - working")
+                else:
+                    logger.debug(f"  ✗ {model_name} - empty response")
+
+            except Exception as e:
+                error_msg = str(e)
+                if "404" in error_msg or "not found" in error_msg.lower():
+                    logger.debug(f"  ✗ {model_name} - not available")
+                elif "429" in error_msg or "quota" in error_msg.lower():
+                    # Quota error means model exists but we hit limits - still add it
+                    logger.warning(f"  ⚠ {model_name} - quota limited, adding anyway")
+                    self.models[model_name] = GenerativeModel(model_name)
+                    self.model_names.append(model_name)
+                    working_models.append(model_name)
+                else:
+                    logger.warning(f"  ✗ {model_name} - error: {error_msg[:80]}")
+
+        # Step 4: Sort by preference (flash models first for speed/cost)
+        def model_priority(name):
+            if "2.0" in name and "flash" in name:
+                return 0  # Prefer 2.0 flash
+            elif "1.5" in name and "flash" in name:
+                return 1  # Then 1.5 flash
+            elif "2.0" in name:
+                return 2  # Then 2.0 pro
+            elif "1.5" in name and "pro" in name:
+                return 3  # Then 1.5 pro
+            else:
+                return 4  # Others last
+
+        self.model_names.sort(key=model_priority)
+        logger.info(f"Model priority order: {self.model_names}")
+
+        return working_models
 
     def should_post_now(self) -> tuple:
         """
@@ -316,44 +394,61 @@ Write the caption:"""
         """
         Attempts to generate content using available models with fallback.
         Tries each model in order until successful or all fail.
+        Includes retry logic for transient errors (429, 503, etc.)
 
         If require_url=True and tools are provided, validates that response contains real URLs.
         """
+        import time
         last_error = None
+        max_retries_per_model = 2
+        transient_error_codes = ['429', '503', '500', 'quota', 'rate', 'overloaded']
 
         for model_name in self.model_names:
             if model_name not in self.models:
                 continue
 
-            try:
-                model = self.models[model_name]
-                # Pass tools if provided (e.g. Grounding)
-                response = model.generate_content(prompt, tools=tools)
+            for retry in range(max_retries_per_model):
+                try:
+                    model = self.models[model_name]
+                    # Pass tools if provided (e.g. Grounding)
+                    response = model.generate_content(prompt, tools=tools)
 
-                if response.text:
-                    text = response.text.strip()
+                    if response.text:
+                        text = response.text.strip()
 
-                    # If URL validation is required
-                    if require_url and tools:
-                        urls = self._extract_urls(text)
-                        valid_urls = [url for url in urls if self._validate_url(url)]
+                        # If URL validation is required
+                        if require_url and tools:
+                            urls = self._extract_urls(text)
+                            valid_urls = [url for url in urls if self._validate_url(url)]
 
-                        if not valid_urls:
-                            logger.warning(f"✗ {model_name} generated content without valid URLs, trying next model")
-                            continue
+                            if not valid_urls:
+                                logger.warning(f"✗ {model_name} generated content without valid URLs, trying next model")
+                                break  # Try next model, not retry
 
-                        logger.info(f"✓ Generated content with {model_name} (found {len(valid_urls)} valid URLs)")
+                            logger.info(f"✓ Generated content with {model_name} (found {len(valid_urls)} valid URLs)")
+                        else:
+                            logger.info(f"✓ Generated content with {model_name}")
+
+                        return text
                     else:
-                        logger.info(f"✓ Generated content with {model_name}")
+                        logger.warning(f"✗ {model_name} returned empty response")
+                        break  # Try next model
 
-                    return text
-                else:
-                    logger.warning(f"✗ {model_name} returned empty response")
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e).lower()
 
-            except Exception as e:
-                last_error = e
-                logger.warning(f"✗ {model_name} failed: {str(e)[:100]}")
-                continue
+                    # Check if it's a transient error worth retrying
+                    is_transient = any(code in error_str for code in transient_error_codes)
+
+                    if is_transient and retry < max_retries_per_model - 1:
+                        wait_time = (retry + 1) * 2  # Exponential backoff: 2s, 4s
+                        logger.warning(f"⚠ {model_name} transient error, retrying in {wait_time}s... ({str(e)[:60]})")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logger.warning(f"✗ {model_name} failed: {str(e)[:100]}")
+                        break  # Try next model
 
         # All models failed
         raise RuntimeError(f"All models failed. Last error: {last_error}")
