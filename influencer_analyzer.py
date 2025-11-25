@@ -4,12 +4,18 @@ Uses Twitter API to discover what's popular and analyzes posting patterns.
 """
 
 import logging
-import os
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import tweepy
 
 logger = logging.getLogger(__name__)
+
+# Import secret fetcher
+try:
+    from config import get_secret
+    SECRET_MANAGER_AVAILABLE = True
+except ImportError:
+    SECRET_MANAGER_AVAILABLE = False
 
 
 class InfluencerAnalyzer:
@@ -49,9 +55,17 @@ class InfluencerAnalyzer:
     EXCLUDED_REGIONS = {'IN'}  # India
 
     def __init__(self, bearer_token: str = None):
-        """Initialize with Twitter API credentials."""
-        self.bearer_token = bearer_token or os.getenv('TWITTER_BEARER_TOKEN')
+        """Initialize with Twitter API credentials from Secret Manager."""
+        self.bearer_token = bearer_token
         self.client = None
+
+        # Try to load from Secret Manager if not provided
+        if not self.bearer_token and SECRET_MANAGER_AVAILABLE:
+            try:
+                self.bearer_token = get_secret('TWITTER_BEARER_TOKEN')
+                logger.info("Loaded Twitter bearer token from Secret Manager")
+            except Exception as e:
+                logger.warning(f"Could not load Twitter bearer token: {e}")
 
         if self.bearer_token:
             try:
