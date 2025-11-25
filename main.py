@@ -225,9 +225,13 @@ def main():
         elif strategy["type"] in ["image", "meme"]:
             image_path = None
             try:
-                # Both image and meme use generate_image() method
-                prompt_key = "meme_prompt" if strategy["type"] == "meme" else "image_prompt"
-                image_path = brain.generate_image(strategy[prompt_key])
+                # Both image and meme use generate_image() with image_prompt
+                # (brain.py sets image_prompt for both types)
+                image_prompt = strategy.get("image_prompt")
+                if not image_prompt:
+                    raise ValueError(f"Missing image_prompt for {strategy['type']} post")
+
+                image_path = brain.generate_image(image_prompt)
 
                 # Upload Image
                 media = upload_media_v1(api_v1, image_path)

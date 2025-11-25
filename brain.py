@@ -268,6 +268,90 @@ class AgentBrain:
             logger.warning(f"Could not check daily media usage: {e}")
             return {'video': 0, 'image': 0, 'infographic': 0, 'meme': 0, 'text': 0}
 
+    def _get_recent_post_types(self, limit: int = 10) -> List[str]:
+        """
+        Gets types of recent posts for media variety tracking.
+        Returns list of post types from most recent to oldest.
+        """
+        try:
+            docs = self.collection.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(limit).stream()
+            types = []
+            for doc in docs:
+                data = doc.to_dict()
+                post_type = data.get("type", "text")
+                types.append(post_type)
+            return types
+        except Exception as e:
+            logger.warning(f"Failed to get recent post types: {e}")
+            return []
+
+    def _get_media_recommendation(self) -> dict:
+        """
+        Analyzes recent post types and recommends what media type to use next.
+        Ensures good variety of content types.
+
+        Returns dict with:
+        - 'suggested_type': str or None (None = let AI decide)
+        - 'avoid_types': list of types used too recently
+        - 'context': str explaining the recommendation
+        """
+        recent_types = self._get_recent_post_types(10)
+        if not recent_types:
+            return {'suggested_type': None, 'avoid_types': [], 'context': 'No history'}
+
+        from collections import Counter
+        counts = Counter(recent_types)
+        total = len(recent_types)
+
+        # Count media vs text
+        text_count = counts.get('text', 0)
+        media_count = total - text_count
+
+        result = {'suggested_type': None, 'avoid_types': [], 'context': ''}
+
+        # RULE 1: If last 3+ posts are all text, strongly suggest media
+        if len(recent_types) >= 3 and all(t == 'text' for t in recent_types[:3]):
+            # Pick least used media type
+            media_types = ['image', 'meme', 'infographic']
+            least_used = min(media_types, key=lambda t: counts.get(t, 0))
+            result['suggested_type'] = least_used
+            result['context'] = f"Last 3 posts all text. Suggesting {least_used} for variety."
+            logger.info(result['context'])
+            return result
+
+        # RULE 2: If text is >70% of last 10, suggest media
+        if total >= 5 and (text_count / total) > 0.7:
+            media_types = ['image', 'meme', 'infographic']
+            least_used = min(media_types, key=lambda t: counts.get(t, 0))
+            result['suggested_type'] = least_used
+            result['context'] = f"Text at {(text_count/total)*100:.0f}% ({text_count}/{total}). Suggesting {least_used}."
+            logger.info(result['context'])
+            return result
+
+        # RULE 3: Meme check - should appear roughly every 5-7 posts
+        meme_count = counts.get('meme', 0)
+        if total >= 7 and meme_count == 0:
+            result['suggested_type'] = 'meme'
+            result['context'] = f"No meme in last {total} posts. Time for one!"
+            logger.info(result['context'])
+            return result
+
+        # RULE 4: Infographic check - good for educational variety
+        infographic_count = counts.get('infographic', 0)
+        if total >= 7 and infographic_count == 0:
+            result['suggested_type'] = 'infographic'
+            result['context'] = f"No infographic in last {total} posts. Suggesting one."
+            logger.info(result['context'])
+            return result
+
+        # RULE 5: Avoid repeating same type twice in a row
+        if len(recent_types) >= 1:
+            result['avoid_types'] = [recent_types[0]]
+
+        result['context'] = f"Media distribution OK: {dict(counts)}"
+        logger.info(result['context'])
+        return result
+
     def _check_media_budget(self, desired_type: str) -> tuple:
         """
         Checks if we have budget for the desired media type.
@@ -645,41 +729,61 @@ WHY: [impact/relevance to {target_audience}]
     def _get_preferred_categories(self) -> List[str]:
         """
         Determines preferred categories based on recent post history.
-        Enforces variety (no 3+ same in a row) and balance (diversify if one dominates).
+        Enforces strict variety and balance to ensure diverse content.
+
+        Rules:
+        1. NEVER repeat same category 3+ times in a row
+        2. AVOID same category 2 times in a row (strong preference for others)
+        3. If any category is >30% of last 10, prefer under-represented ones
+        4. Aim for roughly equal distribution across all categories
         """
+        all_categories = ['ai', 'crypto', 'finance', 'tech']
         recent_10 = self._get_recent_categories(10)
-        recent_3 = recent_10[:3] if len(recent_10) >= 3 else recent_10
 
-        # VARIETY CHECK: Last 3 posts same category?
-        if len(recent_3) >= 3 and len(set(recent_3)) == 1:
-            repeated_category = recent_3[0]
-            logger.warning(f"Last 3 posts all {repeated_category}. Forcing variety!")
-            # Return all OTHER categories
-            all_categories = ['ai', 'crypto', 'finance', 'tech']
-            preferred = [cat for cat in all_categories if cat != repeated_category]
-            logger.info(f"Variety enforcement: preferred categories = {preferred}")
-            return preferred
+        if not recent_10:
+            return all_categories
 
-        # BALANCE CHECK: Count category distribution in last 10
-        if len(recent_10) >= 5:
-            from collections import Counter
-            counts = Counter(recent_10)
-            total = len(recent_10)
+        from collections import Counter
+        counts = Counter(recent_10)
+        total = len(recent_10)
 
-            # Find if any category is over-represented (>50%)
+        # RULE 1: HARD BLOCK - Last 2+ posts same category = EXCLUDE that category
+        if len(recent_10) >= 2:
+            last_category = recent_10[0]
+            if recent_10[1] == last_category:
+                # Same category twice in a row - MUST switch
+                preferred = [cat for cat in all_categories if cat != last_category]
+                logger.warning(f"Last 2 posts both '{last_category}'. Forcing switch to: {preferred}")
+                # Sort by least used
+                preferred.sort(key=lambda cat: counts.get(cat, 0))
+                return preferred
+
+        # RULE 2: SOFT AVOID - Last post category gets deprioritized
+        last_category = recent_10[0] if recent_10 else None
+
+        # RULE 3: BALANCE CHECK - Stricter threshold (30% instead of 50%)
+        if total >= 5:
             for category, count in counts.most_common():
                 percentage = (count / total) * 100
-                if percentage > 50:
-                    logger.warning(f"Category '{category}' is {percentage:.0f}% of last {total} posts. Rebalancing!")
-                    # Prefer categories that are under-represented
-                    all_categories = ['ai', 'crypto', 'finance', 'tech']
-                    # Sort by count (ascending) - prefer least used
-                    preferred = sorted(all_categories, key=lambda cat: counts.get(cat, 0))
-                    logger.info(f"Balance enforcement: preferred categories = {preferred}")
+                if percentage > 30:
+                    # This category is over-represented
+                    # Prefer least-used categories, exclude the over-represented one
+                    preferred = [cat for cat in all_categories if cat != category]
+                    preferred.sort(key=lambda cat: counts.get(cat, 0))
+                    logger.info(f"Category '{category}' at {percentage:.0f}% ({count}/{total}). Preferring: {preferred}")
                     return preferred
 
-        # Default: normal priority (AI > crypto > finance > tech)
-        return ['ai', 'crypto', 'finance', 'tech']
+        # RULE 4: DEFAULT - Prefer least-used categories overall
+        # Sort all categories by usage count (ascending)
+        preferred = sorted(all_categories, key=lambda cat: counts.get(cat, 0))
+
+        # Move last_category to end if it's first in preferred (soft avoid)
+        if last_category and preferred and preferred[0] == last_category:
+            preferred.remove(last_category)
+            preferred.append(last_category)
+
+        logger.info(f"Category distribution: {dict(counts)}. Preferred order: {preferred}")
+        return preferred
 
     def _validate_strategy(self, strategy: dict) -> dict:
         """
@@ -991,81 +1095,102 @@ SUGGESTED_HASHTAGS: <2-3 relevant hashtags or "none">
             post_type = "text"
         else:
             logger.info("BUDGET_MODE disabled, deciding optimal format for media generation")
-            # Ask AI if media actually adds value or if text + link is better
-            decision_prompt = f"""For this tech news, decide the BEST format for maximum engagement.
+
+            # Check media distribution first - ensures variety
+            media_rec = self._get_media_recommendation()
+            suggested_type = media_rec.get('suggested_type')
+            avoid_types = media_rec.get('avoid_types', [])
+
+            # If system strongly suggests a media type (due to imbalance), use it
+            if suggested_type:
+                logger.info(f"📊 Media variety system suggests: {suggested_type}")
+                # Check budget for suggested type
+                allowed, fallback_type, budget_reason = self._check_media_budget(suggested_type)
+                if allowed:
+                    post_type = suggested_type
+                    logger.info(f"Using suggested type: {post_type} ({media_rec.get('context', '')})")
+                else:
+                    logger.warning(f"💰 {budget_reason} - can't use suggested {suggested_type}")
+                    # Let AI decide but exclude the over-budget type
+                    suggested_type = None
+
+            # If no forced suggestion, let AI decide (but with variety context)
+            if not suggested_type:
+                avoid_hint = ""
+                if avoid_types:
+                    avoid_hint = f"\n\nNOTE: Recently posted {avoid_types[0].upper()}, so prefer a different format for variety."
+
+                decision_prompt = f"""For this tech news, decide the BEST format for maximum engagement.
 
 ARTICLE CONTEXT:
 {story_context}
 
 TOPIC: {topic}
-HAS URL: {'Yes - Twitter will show preview card' if story_url else 'No URL available'}
+HAS URL: {'Yes - Twitter will show preview card' if story_url else 'No URL available'}{avoid_hint}
 
-DECISION CRITERIA:
-
-Choose VIDEO only if:
-- Article explains a PROCESS or WORKFLOW (step-by-step)
-- Article describes HOW something works (algorithm, architecture)
-- Visual sequence would make it clearer
-- Example: "How transformer attention works", "Video generation pipeline"
-
-Choose IMAGE only if:
-- Article is about a NEW PRODUCT/DEVICE that needs visualization
-- Complex architecture/diagram would help understanding
-- Before/after comparison is meaningful
-- Example: "New chip design", "UI redesign comparison"
+DECISION CRITERIA (in order of preference for VISUAL engagement):
 
 Choose INFOGRAPHIC if:
-- Article explains a CONCEPT that would benefit from educational visualization
-- Complex topic that can be broken down into visual components
-- Statistics, comparisons, or trends that work well as data viz
-- Topic is educational and could be shown as a diagram/chart
-- Example: "AI model comparison", "Evolution of programming languages", "Tech market trends"
+- Topic can be explained visually with diagrams, charts, or data
+- Educational content that benefits from visualization
+- Statistics, comparisons, trends, or processes
+- This is a GOOD DEFAULT for most tech news!
+- Example: "AI model comparison", "Market trends", "How X works"
+
+Choose IMAGE if:
+- Article is about a NEW PRODUCT/DEVICE/UI
+- Visual representation adds value
+- Architecture diagrams or comparisons
+- Example: "New chip design", "App redesign"
 
 Choose MEME if:
-- Story is ironic, contradictory, or absurd (perfect for meme format)
-- Situation is relatable and funny to tech community
-- Can be expressed as reaction/commentary meme
-- Example: "Another AI company claiming AGI", "Tech layoffs then hiring spree", "New JS framework drops"
+- Story has irony, contradiction, or absurdity
+- Relatable situation for tech community
+- Can be expressed as reaction/commentary
+- Example: "Another AI company claiming AGI", "Tech layoffs then hiring spree"
 
-Choose TEXT if:
-- Simple announcement or partnership (like "X partners with Y")
-- Financial/business news without technical process
-- Twitter link preview card is sufficient
-- Media would be redundant with preview
-- Example: "Company raises $X", "Partnership announced"
+Choose VIDEO only if:
+- Step-by-step process that needs animation
+- Complex workflow requiring motion
+- (Note: VIDEO is expensive, use sparingly)
 
-IMPORTANT: Don't generate redundant media just for engagement. If the Twitter link preview card shows the story well, use TEXT. MEME should be used sparingly (every 5-7 posts). INFOGRAPHIC is great for educational content.
+Choose TEXT only if:
+- Simple news that Twitter preview card handles well
+- No visual would add value
+- Pure business/financial announcement
+
+IMPORTANT: Prefer visual content (INFOGRAPHIC, IMAGE, MEME) over TEXT when possible. Visual posts get more engagement.
 
 Reply with EXACTLY ONE WORD: VIDEO, IMAGE, INFOGRAPHIC, MEME, or TEXT"""
 
-            try:
-                decision = self._generate_with_fallback(decision_prompt).upper()
-                logger.info(f"Format decision response: {decision}")
+                try:
+                    decision = self._generate_with_fallback(decision_prompt).upper()
+                    logger.info(f"Format decision response: {decision}")
 
-                if "VIDEO" in decision:
-                    post_type = "video"
-                elif "INFOGRAPHIC" in decision:
-                    post_type = "infographic"
-                elif "MEME" in decision:
-                    post_type = "meme"
-                elif "IMAGE" in decision:
-                    post_type = "image"
-                else:
-                    post_type = "text"
-
-                # COST CONTROL: Check daily media budget before proceeding
-                if post_type != "text":
-                    allowed, fallback_type, budget_reason = self._check_media_budget(post_type)
-                    if not allowed:
-                        logger.warning(f"💰 {budget_reason} - downgrading {post_type} → {fallback_type}")
-                        post_type = fallback_type
+                    if "VIDEO" in decision:
+                        post_type = "video"
+                    elif "INFOGRAPHIC" in decision:
+                        post_type = "infographic"
+                    elif "MEME" in decision:
+                        post_type = "meme"
+                    elif "IMAGE" in decision:
+                        post_type = "image"
                     else:
-                        logger.info(f"💰 Budget OK for {post_type}: {budget_reason}")
+                        post_type = "text"
 
-                logger.info(f"Selected post type: {post_type}")
-            except Exception as e:
-                logger.warning(f"Format decision failed: {e}, defaulting to text")
-                post_type = "text"
+                    # COST CONTROL: Check daily media budget before proceeding
+                    if post_type != "text":
+                        allowed, fallback_type, budget_reason = self._check_media_budget(post_type)
+                        if not allowed:
+                            logger.warning(f"💰 {budget_reason} - downgrading {post_type} → {fallback_type}")
+                            post_type = fallback_type
+                        else:
+                            logger.info(f"💰 Budget OK for {post_type}: {budget_reason}")
+
+                    logger.info(f"Selected post type: {post_type}")
+                except Exception as e:
+                    logger.warning(f"Format decision failed: {e}, defaulting to text")
+                    post_type = "text"
 
         strategy = {
             "topic": topic,
