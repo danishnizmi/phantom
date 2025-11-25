@@ -207,37 +207,23 @@ class AgentBrain:
             ]
             discovered_models = base_patterns
 
-        # Step 3: Validate each model actually works
-        logger.info(f"Validating {len(discovered_models)} candidate models...")
+        # Step 3: Add models without expensive validation (validate on first use)
+        logger.info(f"Adding {len(discovered_models)} candidate models (lazy validation)...")
         working_models = []
 
         for model_name in discovered_models:
             try:
+                # Just instantiate - don't test with prompt (saves tokens!)
                 model = GenerativeModel(model_name)
-                # Minimal test - just check model loads and responds
-                test_response = model.generate_content(
-                    "Say OK",
-                    generation_config={"max_output_tokens": 5, "temperature": 0}
-                )
-
-                if test_response and test_response.text:
-                    self.models[model_name] = model
-                    self.model_names.append(model_name)
-                    working_models.append(model_name)
-                    logger.info(f"  ✓ {model_name} - working")
-                else:
-                    logger.debug(f"  ✗ {model_name} - empty response")
+                self.models[model_name] = model
+                self.model_names.append(model_name)
+                working_models.append(model_name)
+                logger.info(f"  + {model_name} - added (will validate on first use)")
 
             except Exception as e:
                 error_msg = str(e)
                 if "404" in error_msg or "not found" in error_msg.lower():
                     logger.debug(f"  ✗ {model_name} - not available")
-                elif "429" in error_msg or "quota" in error_msg.lower():
-                    # Quota error means model exists but we hit limits - still add it
-                    logger.warning(f"  ⚠ {model_name} - quota limited, adding anyway")
-                    self.models[model_name] = GenerativeModel(model_name)
-                    self.model_names.append(model_name)
-                    working_models.append(model_name)
                 else:
                     logger.warning(f"  ✗ {model_name} - error: {error_msg[:80]}")
 
@@ -258,6 +244,66 @@ class AgentBrain:
         logger.info(f"Model priority order: {self.model_names}")
 
         return working_models
+
+    def _get_daily_media_usage(self) -> dict:
+        """
+        Checks today's media generation from Firestore to enforce daily limits.
+        Returns dict with counts: {'video': int, 'image': int, 'infographic': int, 'meme': int}
+        """
+        import datetime
+
+        try:
+            # Get start of today (UTC)
+            today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
+            # Query posts from today
+            docs = self.collection.where("timestamp", ">=", today_start).stream()
+
+            counts = {'video': 0, 'image': 0, 'infographic': 0, 'meme': 0, 'text': 0}
+            for doc in docs:
+                data = doc.to_dict()
+                post_type = data.get('type', 'text')
+                if post_type in counts:
+                    counts[post_type] += 1
+
+            logger.info(f"Today's media usage: {counts}")
+            return counts
+
+        except Exception as e:
+            logger.warning(f"Could not check daily media usage: {e}")
+            return {'video': 0, 'image': 0, 'infographic': 0, 'meme': 0, 'text': 0}
+
+    def _check_media_budget(self, desired_type: str) -> tuple:
+        """
+        Checks if we have budget for the desired media type.
+        Returns (allowed: bool, fallback_type: str, reason: str)
+
+        Daily limits (to control Vertex AI costs):
+        - VIDEO: 1 per day max ($0.50+ each)
+        - IMAGE/INFOGRAPHIC/MEME: 3 per day combined ($0.01-0.05 each)
+        - TEXT: unlimited (free)
+        """
+        DAILY_LIMITS = {
+            'video': 1,           # Very expensive - Veo 2
+            'image': 3,           # Imagen - moderate cost
+            'infographic': 3,     # Uses Imagen
+            'meme': 3,            # Uses Imagen
+        }
+
+        usage = self._get_daily_media_usage()
+
+        # Check video budget
+        if desired_type == 'video':
+            if usage['video'] >= DAILY_LIMITS['video']:
+                return False, 'text', f"Video budget exhausted ({usage['video']}/{DAILY_LIMITS['video']} today)"
+
+        # Check image budget (combined for image/infographic/meme)
+        if desired_type in ['image', 'infographic', 'meme']:
+            image_total = usage['image'] + usage['infographic'] + usage['meme']
+            if image_total >= DAILY_LIMITS['image']:
+                return False, 'text', f"Image budget exhausted ({image_total}/{DAILY_LIMITS['image']} today)"
+
+        return True, desired_type, "Within budget"
 
     def should_post_now(self) -> tuple:
         """
@@ -898,6 +944,15 @@ Reply with EXACTLY ONE WORD: VIDEO, IMAGE, INFOGRAPHIC, MEME, or TEXT"""
                     post_type = "image"
                 else:
                     post_type = "text"
+
+                # COST CONTROL: Check daily media budget before proceeding
+                if post_type != "text":
+                    allowed, fallback_type, budget_reason = self._check_media_budget(post_type)
+                    if not allowed:
+                        logger.warning(f"💰 {budget_reason} - downgrading {post_type} → {fallback_type}")
+                        post_type = fallback_type
+                    else:
+                        logger.info(f"💰 Budget OK for {post_type}: {budget_reason}")
 
                 logger.info(f"Selected post type: {post_type}")
             except Exception as e:
