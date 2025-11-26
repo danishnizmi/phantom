@@ -1094,103 +1094,68 @@ SUGGESTED_HASHTAGS: <2-3 relevant hashtags or "none">
             logger.info("BUDGET_MODE enabled, using text-only format")
             post_type = "text"
         else:
-            logger.info("BUDGET_MODE disabled, deciding optimal format for media generation")
+            # SIMPLE RULE: If we have a URL, use TEXT (Twitter shows link preview)
+            # Only generate media for MEME or when NO URL available
+            if story_url:
+                # We have a link - Twitter will show preview card
+                # Only exception: MEME format (ironic/funny commentary)
 
-            # Check media distribution first - ensures variety
-            media_rec = self._get_media_recommendation()
-            suggested_type = media_rec.get('suggested_type')
-            avoid_types = media_rec.get('avoid_types', [])
-
-            # If system strongly suggests a media type (due to imbalance), use it
-            if suggested_type:
-                logger.info(f"📊 Media variety system suggests: {suggested_type}")
-                # Check budget for suggested type
-                allowed, fallback_type, budget_reason = self._check_media_budget(suggested_type)
-                if allowed:
-                    post_type = suggested_type
-                    logger.info(f"Using suggested type: {post_type} ({media_rec.get('context', '')})")
-                else:
-                    logger.warning(f"💰 {budget_reason} - can't use suggested {suggested_type}")
-                    # Let AI decide but exclude the over-budget type
-                    suggested_type = None
-
-            # If no forced suggestion, let AI decide (but with variety context)
-            if not suggested_type:
-                avoid_hint = ""
-                if avoid_types:
-                    avoid_hint = f"\n\nNOTE: Recently posted {avoid_types[0].upper()}, so prefer a different format for variety."
-
-                decision_prompt = f"""For this tech news, decide the BEST format for maximum engagement.
-
-ARTICLE CONTEXT:
-{story_context}
+                # Check if this story is meme-worthy (ironic, absurd, contradictory)
+                meme_check_prompt = f"""Is this news story suitable for a MEME? Answer YES or NO.
 
 TOPIC: {topic}
-HAS URL: {'Yes - Twitter will show preview card' if story_url else 'No URL available'}{avoid_hint}
+CONTEXT: {story_context[:500]}
 
-DECISION CRITERIA (in order of preference for VISUAL engagement):
+A story is meme-worthy if it's:
+- Ironic or contradictory (company does opposite of what they said)
+- Absurd or ridiculous situation
+- Relatable frustration for tech community
+- Perfect for sarcastic commentary
 
-Choose INFOGRAPHIC if:
-- Topic can be explained visually with diagrams, charts, or data
-- Educational content that benefits from visualization
-- Statistics, comparisons, trends, or processes
-- This is a GOOD DEFAULT for most tech news!
-- Example: "AI model comparison", "Market trends", "How X works"
-
-Choose IMAGE if:
-- Article is about a NEW PRODUCT/DEVICE/UI
-- Visual representation adds value
-- Architecture diagrams or comparisons
-- Example: "New chip design", "App redesign"
-
-Choose MEME if:
-- Story has irony, contradiction, or absurdity
-- Relatable situation for tech community
-- Can be expressed as reaction/commentary
-- Example: "Another AI company claiming AGI", "Tech layoffs then hiring spree"
-
-Choose VIDEO only if:
-- Step-by-step process that needs animation
-- Complex workflow requiring motion
-- (Note: VIDEO is expensive, use sparingly)
-
-Choose TEXT only if:
-- Simple news that Twitter preview card handles well
-- No visual would add value
-- Pure business/financial announcement
-
-IMPORTANT: Prefer visual content (INFOGRAPHIC, IMAGE, MEME) over TEXT when possible. Visual posts get more engagement.
-
-Reply with EXACTLY ONE WORD: VIDEO, IMAGE, INFOGRAPHIC, MEME, or TEXT"""
+Answer ONLY "YES" or "NO":"""
 
                 try:
-                    decision = self._generate_with_fallback(decision_prompt).upper()
-                    logger.info(f"Format decision response: {decision}")
-
-                    if "VIDEO" in decision:
-                        post_type = "video"
-                    elif "INFOGRAPHIC" in decision:
-                        post_type = "infographic"
-                    elif "MEME" in decision:
-                        post_type = "meme"
-                    elif "IMAGE" in decision:
-                        post_type = "image"
+                    meme_check = self._generate_with_fallback(meme_check_prompt).strip().upper()
+                    if "YES" in meme_check:
+                        # Check if we have meme budget
+                        allowed, _, budget_reason = self._check_media_budget('meme')
+                        if allowed:
+                            post_type = "meme"
+                            logger.info(f"📸 Meme-worthy story detected! Using meme format.")
+                        else:
+                            post_type = "text"
+                            logger.info(f"Story is meme-worthy but {budget_reason}. Using text with URL.")
                     else:
                         post_type = "text"
-
-                    # COST CONTROL: Check daily media budget before proceeding
-                    if post_type != "text":
-                        allowed, fallback_type, budget_reason = self._check_media_budget(post_type)
-                        if not allowed:
-                            logger.warning(f"💰 {budget_reason} - downgrading {post_type} → {fallback_type}")
-                            post_type = fallback_type
-                        else:
-                            logger.info(f"💰 Budget OK for {post_type}: {budget_reason}")
-
-                    logger.info(f"Selected post type: {post_type}")
+                        logger.info(f"📰 Has URL - using text format (Twitter shows link preview)")
                 except Exception as e:
-                    logger.warning(f"Format decision failed: {e}, defaulting to text")
+                    logger.warning(f"Meme check failed: {e}, defaulting to text")
                     post_type = "text"
+            else:
+                # No URL - can generate visual content
+                logger.info("No URL available - can use visual media")
+
+                # Check media distribution for variety
+                media_rec = self._get_media_recommendation()
+                suggested_type = media_rec.get('suggested_type')
+
+                if suggested_type and suggested_type != 'text':
+                    allowed, fallback_type, budget_reason = self._check_media_budget(suggested_type)
+                    if allowed:
+                        post_type = suggested_type
+                        logger.info(f"Using suggested media type: {post_type}")
+                    else:
+                        post_type = "infographic"  # Default visual when no URL
+                else:
+                    post_type = "infographic"  # Default visual when no URL
+
+                # Final budget check
+                allowed, fallback_type, budget_reason = self._check_media_budget(post_type)
+                if not allowed:
+                    logger.warning(f"💰 {budget_reason} - falling back to text")
+                    post_type = "text"
+
+            logger.info(f"Selected post type: {post_type}")
 
         strategy = {
             "topic": topic,
