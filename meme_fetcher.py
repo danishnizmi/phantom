@@ -341,40 +341,38 @@ class ContentResearcher:
 
     def research_topic(self, topic: str, context: str, category: str) -> Dict:
         """
-        Research a topic and return content recommendations.
+        AI researches topic and decides best content format dynamically.
         Returns dict with format, style, and reasoning.
         """
         # Get trending context if available
         trending_context = self._get_trending_context(category)
 
-        prompt = f"""You are a viral content strategist. Pick the format that will get the MOST engagement.
+        prompt = f"""You're an AI running a tech Twitter account. Decide the best content format for this topic.
 
 TOPIC: {topic}
 CATEGORY: {category}
-CONTEXT: {context[:600]}
-{f'TRENDING NOW: {trending_context}' if trending_context else ''}
+CONTEXT: {context[:500]}
+{f'CURRENT TRENDS: {trending_context}' if trending_context else ''}
 
-FORMATS (ranked by engagement potential):
-1. VIDEO - AI-generated cinematic visuals. BEST for: major AI/tech news, product launches, futuristic topics, anything visually dramatic. Styles: cyberpunk, anime, data storms, neon aesthetics.
-2. MEME - Fetched from Reddit/internet. BEST for: ironic takes, relatable dev frustrations, crypto drama, absurd corporate news.
-3. INFOGRAPHIC - Educational visual. BEST for: comparisons, stats, "how X works", technical explainers.
-4. TEXT - Link + caption. BEST for: breaking news where speed matters, simple announcements.
+AVAILABLE FORMATS:
+- VIDEO: AI-generated visuals (best for high-impact, visual topics)
+- MEME: Fetched from internet (best for irony, relatable content)
+- INFOGRAPHIC: Educational visuals (best for explanations, data)
+- TEXT: Link + caption (best for quick news, simple updates)
 
-WHEN TO USE VIDEO (be aggressive):
-- Topic involves AI, future tech, major announcements = VIDEO
-- Topic has visual potential (cyberpunk, digital, futuristic) = VIDEO
-- Topic is trending and needs impact = VIDEO
-- Don't be shy about VIDEO - it gets 3x more engagement
+THINK ABOUT:
+1. Does this topic have strong VISUAL potential? → VIDEO
+2. Is there irony, drama, or relatable frustration? → MEME
+3. Are there concepts to explain or compare? → INFOGRAPHIC
+4. Is it just news that needs fast sharing? → TEXT
 
-WHEN TO USE MEME:
-- Topic is absurd, ironic, or frustrating
-- Community will relate (dev pain, crypto drama, corp fails)
+Make your own judgment. Don't default to TEXT - media gets more engagement.
 
-Respond EXACTLY:
+Respond:
 RECOMMENDED_FORMAT: <VIDEO|MEME|INFOGRAPHIC|TEXT>
 CONFIDENCE: <HIGH|MEDIUM|LOW>
-REASONING: <why this format wins>
-STYLE_NOTES: <for VIDEO: suggest aesthetic (cyberpunk/anime/etc). For MEME: suggest tone>
+REASONING: <one line - why this format>
+STYLE_NOTES: <if VIDEO/MEME: style direction. If TEXT: N/A>
 IS_TRENDING: <YES|NO>
 """
 
@@ -492,37 +490,27 @@ SUGGESTED_CAPTION: <caption or N/A>
 
     def generate_video_prompt(self, topic: str, context: str, style_notes: str) -> Optional[str]:
         """
-        Generate a creative, artistic video prompt. Research trending styles first.
+        Generate a creative video prompt. AI decides the best visual style dynamically.
         Returns validated prompt or None if can't create good one.
         """
-        # Creative video styles that perform well on social media
-        prompt = f"""You're a creative director making viral AI videos. Create a VISUALLY STUNNING prompt.
+        prompt = f"""You're creating an AI-generated video for social media. Think: what visual style would make this topic GO VIRAL?
 
 TOPIC: {topic}
 CONTEXT: {context[:400]}
-{f'STYLE HINT: {style_notes}' if style_notes else ''}
+{f'DIRECTION: {style_notes}' if style_notes else ''}
 
-TRENDING VIDEO AESTHETICS (pick one that fits):
-- CYBERPUNK: Neon rain, holographic UI, pink/blue city lights, Blade Runner vibes
-- ANIME/MANGA: Dynamic action lines, cel-shaded, dramatic lighting, anime character silhouettes
-- DIGITAL SAMURAI: Futuristic warrior, glowing katana, cherry blossoms + circuits
-- DATA STORM: 3D data visualization, floating numbers, matrix rain, neural networks
-- RETRO SYNTH: 80s grid, sunset gradients, chrome text, vaporwave aesthetic
-- GHOST IN SHELL: Cyborg, digital consciousness, floating code, philosophical tech
-- AKIRA STYLE: Motorcycle lights, neon Tokyo, explosive energy, red cape flowing
+YOUR JOB:
+1. Analyze the topic - what visual style fits best?
+2. Think about current aesthetic trends (anime, cyberpunk, retro, minimalist, dramatic, etc.)
+3. Create a SPECIFIC, CINEMATIC prompt that Veo/AI video can generate
 
-MAKE IT VISUAL AND CINEMATIC:
-- Think "would this get views on TikTok/X?"
-- Dramatic lighting, movement, energy
-- No boring corporate visuals
-
-PROMPT REQUIREMENTS:
+REQUIREMENTS:
 - 100-200 characters
-- SPECIFIC scene description
-- Include lighting/color direction
-- Cinematic camera movement if relevant
+- Describe a SPECIFIC scene (not vague concepts)
+- Include: lighting, colors, movement, mood
+- Make it visually STRIKING - boring = no engagement
 
-Respond with ONLY the video prompt. If topic doesn't fit any style, respond "CANNOT_GENERATE".
+If the topic has no good visual angle, respond "CANNOT_GENERATE".
 
 VIDEO_PROMPT:"""
 
