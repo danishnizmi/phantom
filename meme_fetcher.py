@@ -341,37 +341,39 @@ class ContentResearcher:
 
     def research_topic(self, topic: str, context: str, category: str) -> Dict:
         """
-        Research a topic and return content recommendations.
+        AI researches topic and decides best content format dynamically.
         Returns dict with format, style, and reasoning.
         """
         # Get trending context if available
         trending_context = self._get_trending_context(category)
 
-        prompt = f"""You are a content strategist for a tech Twitter account. Analyze this topic and recommend the BEST content format.
+        prompt = f"""You're an AI running a tech Twitter account. Decide the best content format for this topic.
 
 TOPIC: {topic}
 CATEGORY: {category}
-ARTICLE CONTEXT: {context[:800]}
-{f'CURRENTLY TRENDING: {trending_context}' if trending_context else ''}
+CONTEXT: {context[:500]}
+{f'CURRENT TRENDS: {trending_context}' if trending_context else ''}
 
 AVAILABLE FORMATS:
-1. TEXT - Simple tweet with article link (Twitter shows preview card)
-2. MEME - Funny/ironic image from internet + witty caption
-3. INFOGRAPHIC - Educational visual explaining concepts
-4. VIDEO - Animated visual (expensive, use sparingly for HIGH impact topics)
+- VIDEO: AI-generated visuals (best for high-impact, visual topics)
+- MEME: Fetched from internet (best for irony, relatable content)
+- INFOGRAPHIC: Educational visuals (best for explanations, data)
+- TEXT: Link + caption (best for quick news, simple updates)
 
-DECISION CRITERIA:
-- TEXT: Default for news with good link preview. Low effort, still effective.
-- MEME: Story is ironic, absurd, or relatable frustration. Community will appreciate humor.
-- INFOGRAPHIC: Educational content, comparisons, stats, "how it works" topics.
-- VIDEO: Only for MAJOR announcements or highly visual processes. Very expensive.
+THINK ABOUT:
+1. Does this topic have strong VISUAL potential? → VIDEO
+2. Is there irony, drama, or relatable frustration? → MEME
+3. Are there concepts to explain or compare? → INFOGRAPHIC
+4. Is it just news that needs fast sharing? → TEXT
 
-Analyze and respond in this EXACT format:
-RECOMMENDED_FORMAT: <TEXT|MEME|INFOGRAPHIC|VIDEO>
+Make your own judgment. Don't default to TEXT - media gets more engagement.
+
+Respond:
+RECOMMENDED_FORMAT: <VIDEO|MEME|INFOGRAPHIC|TEXT>
 CONFIDENCE: <HIGH|MEDIUM|LOW>
-REASONING: <one line explaining why>
-STYLE_NOTES: <specific style guidance if MEME/INFOGRAPHIC/VIDEO, or "N/A" for TEXT>
-IS_TRENDING: <YES|NO - is this topic currently hot?>
+REASONING: <one line - why this format>
+STYLE_NOTES: <if VIDEO/MEME: style direction. If TEXT: N/A>
+IS_TRENDING: <YES|NO>
 """
 
         try:
@@ -429,31 +431,36 @@ IS_TRENDING: <YES|NO - is this topic currently hot?>
     def validate_meme(self, meme: Dict, topic: str) -> Dict:
         """
         AI validates if a meme is safe and engaging for posting.
-        Returns dict with 'approved', 'reason', 'suggested_caption'.
+        Returns dict with 'approved', 'reason', 'suggested_caption' (Big Boss style).
         """
         title = meme.get('title', '')
         source = meme.get('source', '')
         score = meme.get('score', 0)
 
-        prompt = f"""Evaluate this meme for a professional tech Twitter account.
+        prompt = f"""Evaluate this meme for a cynical tech Twitter account.
 
 MEME:
 - Title: "{title}"
 - Source: {source}
-- Popularity Score: {score}
-- Topic Context: {topic}
+- Score: {score}
+- Topic: {topic}
 
-EVALUATE:
-1. SAFE? (No offensive content, politics, NSFW, slurs, controversial takes)
-2. RELEVANT? (Fits tech/AI/crypto/finance audience)
-3. ENGAGING? (Actually funny/relatable, not cringe)
+CHECK:
+1. SAFE? (No politics, NSFW, slurs, controversial)
+2. RELEVANT? (Tech/AI/crypto/finance audience)
+3. FUNNY? (Actually good, not cringe)
 
-Be STRICT. When in doubt, reject. We'd rather post nothing than something bad.
+Be strict. Skip anything questionable.
 
-Respond EXACTLY:
+If APPROVED, write a SHORT caption (50-100 chars):
+- Dry wit, cynical observation
+- No emojis, no hashtags
+- Sound like a tired dev, not a marketer
+
+Respond:
 APPROVED: YES or NO
-REASON: <one line>
-SUGGESTED_CAPTION: <witty caption if approved, "N/A" if not>
+REASON: <why>
+SUGGESTED_CAPTION: <caption or N/A>
 """
 
         try:
@@ -481,77 +488,38 @@ SUGGESTED_CAPTION: <witty caption if approved, "N/A" if not>
             logger.error(f"Meme validation failed: {e}")
             return {'approved': False, 'reason': str(e), 'suggested_caption': ''}
 
-    def validate_prompt(self, prompt_type: str, prompt_text: str, topic: str) -> Dict:
-        """
-        AI validates if a generation prompt makes sense before using it.
-        Prevents wasting API calls on bad prompts.
-        """
-        validation_prompt = f"""Evaluate this {prompt_type} generation prompt.
-
-PROMPT TO EVALUATE:
-"{prompt_text}"
-
-TOPIC CONTEXT: {topic}
-
-CHECK:
-1. Is it SPECIFIC enough? (Not vague like "cool tech stuff")
-2. Is it ACHIEVABLE? (AI can actually generate this)
-3. Is it RELEVANT? (Matches the topic)
-4. Is it PROFESSIONAL? (Appropriate for business account)
-
-Respond EXACTLY:
-VALID: YES or NO
-ISSUES: <list any problems, or "None">
-IMPROVED_PROMPT: <better version if needed, or "N/A" if already good>
-"""
-
-        try:
-            response = self.generate(validation_prompt)
-
-            valid = 'VALID: YES' in response.upper()
-            issues = ''
-            improved = ''
-
-            if 'ISSUES:' in response:
-                issues = response.split('ISSUES:')[1].split('\n')[0].strip()
-
-            if 'IMPROVED_PROMPT:' in response:
-                improved = response.split('IMPROVED_PROMPT:')[1].split('\n')[0].strip()
-                if improved.upper() == 'N/A':
-                    improved = prompt_text
-
-            return {
-                'valid': valid,
-                'issues': issues,
-                'improved_prompt': improved if improved else prompt_text
-            }
-
-        except Exception as e:
-            logger.error(f"Prompt validation failed: {e}")
-            return {'valid': True, 'issues': '', 'improved_prompt': prompt_text}
-
     def generate_video_prompt(self, topic: str, context: str, style_notes: str) -> Optional[str]:
         """
-        Generate and validate a video prompt.
+        Generate a creative video prompt. AI decides the best visual style dynamically.
         Returns validated prompt or None if can't create good one.
         """
-        prompt = f"""Create a VIDEO generation prompt for this topic.
+        prompt = f"""You're creating an AI-generated video for social media. Think: what visual style would make this topic GO VIRAL?
 
 TOPIC: {topic}
-CONTEXT: {context[:500]}
-STYLE GUIDANCE: {style_notes}
+CONTEXT: {context[:400]}
+{f'DIRECTION: {style_notes}' if style_notes else ''}
 
-VIDEO STYLES THAT WORK:
-- Cyberpunk: Neon cities, holograms, rain, pink/blue lights
-- Data visualization: 3D charts, floating numbers, clean aesthetic
-- Tech montage: Code flowing, circuits lighting up, futuristic UI
+YOUR JOB:
+1. Analyze the topic - what visual style fits best?
+2. Think about current aesthetic trends (anime, cyberpunk, retro, minimalist, dramatic, etc.)
+3. Create a SPECIFIC, CINEMATIC prompt that Veo/AI video can generate
 
-Create a SPECIFIC, VISUAL prompt (100-200 chars) that Veo can actually generate.
+REQUIREMENTS:
+- 100-200 characters
+- Describe a SPECIFIC scene (not vague concepts)
+- Include: lighting, colors, movement, mood
+- Make it visually STRIKING - boring = no engagement
+
+If the topic has no good visual angle, respond "CANNOT_GENERATE".
 
 VIDEO_PROMPT:"""
 
         try:
             response = self.generate(prompt)
+
+            if 'CANNOT_GENERATE' in response.upper():
+                logger.warning("AI could not generate valid video prompt")
+                return None
 
             if 'VIDEO_PROMPT:' in response:
                 video_prompt = response.split('VIDEO_PROMPT:')[1].strip()
@@ -565,12 +533,6 @@ VIDEO_PROMPT:"""
                 logger.warning(f"Video prompt too short: {video_prompt}")
                 return None
 
-            # Validate the prompt
-            validation = self.validate_prompt('video', video_prompt, topic)
-            if not validation['valid']:
-                logger.warning(f"Video prompt invalid: {validation['issues']}")
-                video_prompt = validation['improved_prompt']
-
             return video_prompt
 
         except Exception as e:
@@ -579,12 +541,13 @@ VIDEO_PROMPT:"""
 
     def generate_infographic_prompt(self, topic: str, context: str, key_points: List[str]) -> Optional[str]:
         """
-        Generate and validate an infographic prompt.
+        Generate an infographic prompt with built-in self-validation (single AI call).
         Returns validated prompt or None.
         """
         points_text = '\n'.join(f"- {p}" for p in key_points[:5])
 
-        prompt = f"""Create an INFOGRAPHIC image prompt for this topic.
+        # Combined generation + validation in ONE call to save API costs
+        prompt = f"""Create an INFOGRAPHIC image prompt for this topic. Self-validate before responding.
 
 TOPIC: {topic}
 KEY POINTS:
@@ -597,13 +560,22 @@ INFOGRAPHIC STYLES:
 - Stats: Big numbers with icons
 - Diagram: System architecture or concept map
 
-Create a SPECIFIC prompt (80-150 chars) for Imagen to generate.
-Focus on CLEAN, PROFESSIONAL, EDUCATIONAL visual.
+REQUIREMENTS (self-validate):
+1. SPECIFIC enough for image generation
+2. CLEAN, PROFESSIONAL, EDUCATIONAL style
+3. RELEVANT to topic and key points
+4. 80-150 characters
+
+Only respond with the final prompt. If you can't create a good one, respond "CANNOT_GENERATE".
 
 INFOGRAPHIC_PROMPT:"""
 
         try:
             response = self.generate(prompt)
+
+            if 'CANNOT_GENERATE' in response.upper():
+                logger.warning("AI could not generate valid infographic prompt")
+                return None
 
             if 'INFOGRAPHIC_PROMPT:' in response:
                 infographic_prompt = response.split('INFOGRAPHIC_PROMPT:')[1].strip()
@@ -615,11 +587,6 @@ INFOGRAPHIC_PROMPT:"""
             if len(infographic_prompt) < 30:
                 logger.warning(f"Infographic prompt too short")
                 return None
-
-            # Validate
-            validation = self.validate_prompt('infographic', infographic_prompt, topic)
-            if not validation['valid']:
-                infographic_prompt = validation['improved_prompt']
 
             return infographic_prompt
 

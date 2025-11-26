@@ -331,6 +331,68 @@ class NewsFetcher:
 
         return None
 
+    def get_multiple_stories(self, count: int = 5, preferred_categories: List[str] = None) -> List[Dict]:
+        """
+        Gets multiple trending stories for AI to choose from.
+        Returns list of top stories (already scored and sorted).
+
+        Args:
+            count: Number of stories to return (default 5)
+            preferred_categories: List of categories to prefer
+        """
+        stories = self.fetch_tech_news_from_sources()
+
+        if not stories:
+            return []
+
+        # Default preference
+        if not preferred_categories:
+            preferred_categories = ['ai', 'crypto', 'finance', 'tech']
+
+        # Keyword weights (same as get_trending_story)
+        keyword_weights = {
+            'ai': ['ai', 'artificial intelligence', 'machine learning', 'llm', 'neural',
+                   'gpt', 'claude', 'gemini', 'openai', 'anthropic', 'chatgpt'],
+            'crypto': ['crypto', 'bitcoin', 'ethereum', 'blockchain', 'defi', 'web3'],
+            'finance': ['stock', 'market', 'trading', 'investment', 'economy'],
+            'tech': ['programming', 'developer', 'code', 'framework', 'startup']
+        }
+
+        # Score stories
+        scored = []
+        for story in stories:
+            title_lower = story['title'].lower()
+            category = story.get('category', 'tech')
+
+            score = 0
+            if category in preferred_categories:
+                score += (len(preferred_categories) - preferred_categories.index(category)) * 100
+
+            for cat, keywords in keyword_weights.items():
+                matches = sum(1 for kw in keywords if kw in title_lower)
+                score += matches * (30 if cat == category else 10)
+
+            score += story.get('score', 0) / 10
+            scored.append({**story, 'relevance_score': score})
+
+        scored.sort(key=lambda x: x['relevance_score'], reverse=True)
+
+        # Return top N with variety (pick from different categories)
+        result = []
+        seen_categories = set()
+
+        for story in scored:
+            cat = story.get('category', 'tech')
+            # Ensure category variety in results
+            if len(result) < count:
+                # Prioritize diversity in first few
+                if cat not in seen_categories or len(result) >= count // 2:
+                    result.append(story)
+                    seen_categories.add(cat)
+
+        logger.info(f"Returning {len(result)} stories for AI selection")
+        return result[:count]
+
     def validate_url(self, url: str) -> bool:
         """Quick validation that URL is accessible."""
         try:

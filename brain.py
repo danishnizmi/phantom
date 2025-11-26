@@ -62,6 +62,34 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# PERSONA - AI-driven, adaptive voice
+# Account: @Patriot0xSystem "BIG BOSS" from "Outer Heaven"
+# Let AI find the right tone for each post
+PERSONA_CONTEXT = """You are an AI running a tech Twitter account called "BIG BOSS" (@Patriot0xSystem).
+
+ACCOUNT CONTEXT:
+- Bio: "We're not tools of the algorithm"
+- Location: Outer Heaven
+- Vibe: Metal Gear Solid inspired, but subtle - a veteran observer of tech
+
+YOUR VOICE (adapt naturally):
+- Dry wit, skeptical of hype
+- Short, punchy statements
+- Cynical but not negative
+- Occasional subtle references to the account's theme (rare, natural)
+
+AVOID:
+- Corporate speak, marketing hype
+- Overdoing any theme (cringe)
+- Emojis, hashtags
+- Being preachy
+
+You're an AI that KNOWS it's an AI. Be authentic to that. Find your own balance for each post.
+"""
+
+# Alias for backward compatibility
+BIG_BOSS_PERSONA = PERSONA_CONTEXT
+
 class AgentBrain:
     def __init__(self):
         self.project_id = Config.PROJECT_ID
@@ -382,30 +410,22 @@ class AgentBrain:
 
         Daily limits (to control Vertex AI costs):
         - VIDEO: 1 per day max ($0.50+ each)
-        - IMAGE/INFOGRAPHIC/MEME: 3 per day combined ($0.01-0.05 each)
-        - TEXT: unlimited (free)
+        - IMAGE/INFOGRAPHIC/MEME: 5 per day combined ($0.01-0.05 each)
         """
-        DAILY_LIMITS = {
-            'video': 1,           # Very expensive - Veo 2
-            'image': 3,           # Imagen - moderate cost
-            'infographic': 3,     # Uses Imagen
-            'meme': 3,            # Uses Imagen
-        }
-
         usage = self._get_daily_media_usage()
 
-        # Check video budget
+        # Video limit: 1 per day
         if desired_type == 'video':
-            if usage['video'] >= DAILY_LIMITS['video']:
-                return False, 'text', f"Video budget exhausted ({usage['video']}/{DAILY_LIMITS['video']} today)"
+            if usage.get('video', 0) >= 1:
+                return (False, 'text', f"Video budget exhausted ({usage['video']}/1 today)")
+            return (True, 'video', f"Video OK ({usage['video']}/1 today)")
 
-        # Check image budget (combined for image/infographic/meme)
-        if desired_type in ['image', 'infographic', 'meme']:
-            image_total = usage['image'] + usage['infographic'] + usage['meme']
-            if image_total >= DAILY_LIMITS['image']:
-                return False, 'text', f"Image budget exhausted ({image_total}/{DAILY_LIMITS['image']} today)"
+        # Image types limit: 5 per day combined (increased from 3)
+        image_count = usage.get('image', 0) + usage.get('infographic', 0) + usage.get('meme', 0)
+        if image_count >= 5:
+            return (False, 'text', f"Image budget exhausted ({image_count}/5 today)")
 
-        return True, desired_type, "Within budget"
+        return (True, desired_type, f"Image budget OK ({image_count}/5 today)")
 
     def should_post_now(self) -> tuple:
         """
@@ -691,6 +711,60 @@ WHY: [impact/relevance to {target_audience}]
             'category': 'tech',
             'context': f"Topic: {topic_name}"
         }
+
+    def _ai_select_topic(self, preferred_categories: List[str] = None) -> dict:
+        """
+        BIG BOSS AI autonomously selects the best topic to comment on.
+        Fetches multiple stories and picks the most worthy one.
+        """
+        # Get multiple stories
+        stories = self.news_fetcher.get_multiple_stories(count=5, preferred_categories=preferred_categories)
+
+        if not stories:
+            logger.warning("No stories available for AI selection")
+            return self._get_trending_story(preferred_categories)
+
+        if len(stories) == 1:
+            return stories[0]
+
+        # Build selection prompt
+        story_list = "\n".join([
+            f"{i+1}. [{s.get('category', 'tech').upper()}] {s['title']}"
+            for i, s in enumerate(stories)
+        ])
+
+        selection_prompt = f"""Pick the best story for a cynical tech Twitter account.
+
+STORIES:
+{story_list}
+
+PICK BASED ON:
+- Most interesting to devs/tech people
+- Has visual potential (for video/meme)
+- Trending or controversial = good
+- Avoid boring corporate announcements
+
+Respond with ONLY the number (1-{len(stories)})."""
+
+        try:
+            response = self._generate_with_fallback(selection_prompt).strip()
+            # Extract number from response
+            import re
+            match = re.search(r'\d+', response)
+            if match:
+                idx = int(match.group()) - 1
+                if 0 <= idx < len(stories):
+                    selected = stories[idx]
+                    logger.info(f"🎖️ BIG BOSS selected: [{selected.get('category', 'tech').upper()}] {selected['title'][:50]}...")
+                    return selected
+
+            # Fallback to first story if parsing fails
+            logger.warning(f"Could not parse AI selection '{response}', using first story")
+            return stories[0]
+
+        except Exception as e:
+            logger.warning(f"AI topic selection failed: {e}, falling back to first story")
+            return stories[0]
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     def _check_history(self, topic: str, url: str = None) -> bool:
@@ -1064,7 +1138,9 @@ SUGGESTED_HASHTAGS: <2-3 relevant hashtags or "none">
         if trending_insights.get('has_data'):
             logger.info(f"Using trending insights: {trending_insights.get('recommendation', 'N/A')}")
 
-        story = self._get_trending_story(preferred_categories=preferred_categories)
+        # BIG BOSS AI autonomously selects the topic
+        logger.info("🎖️ BIG BOSS selecting intel to comment on...")
+        story = self._ai_select_topic(preferred_categories=preferred_categories)
         topic = story['title']
         story_url = story.get('url')  # Real URL or None
         story_context = story.get('context', f"Article: {topic}")  # Rich context from article
@@ -1112,37 +1188,55 @@ SUGGESTED_HASHTAGS: <2-3 relevant hashtags or "none">
         logger.info(f"Selected Topic: {topic}")
         logger.info(f"Article Context: {story_context[:150]}...")
 
-        # AGENTIC FORMAT DECISION: Research first, then decide
+        # COST-EFFICIENT FORMAT DECISION
+        # Check budget FIRST before spending on research (saves API calls)
         if Config.BUDGET_MODE:
             logger.info("BUDGET_MODE enabled, using text-only format")
             post_type = "text"
             research_result = {'format': 'TEXT', 'style_notes': '', 'reasoning': 'Budget mode'}
         else:
-            # Use ContentResearcher for intelligent format decision
-            research_result = {'format': 'TEXT', 'style_notes': '', 'reasoning': 'Default'}
+            # EARLY BUDGET CHECK - skip expensive research if no budget
+            usage = self._get_daily_media_usage()
+            image_count = usage.get('image', 0) + usage.get('infographic', 0) + usage.get('meme', 0)
 
-            if self.content_researcher:
-                logger.info("🔬 Researching best content format...")
-                research_result = self.content_researcher.research_topic(
-                    topic=topic,
-                    context=story_context,
-                    category=story.get('category', 'tech')
-                )
-                logger.info(f"Research: {research_result['format']} ({research_result.get('confidence', 'N/A')}) - {research_result.get('reasoning', '')[:60]}")
-
-                post_type = research_result['format'].lower()
-
-                # Budget check for non-text formats
-                if post_type != 'text':
-                    allowed, _, budget_reason = self._check_media_budget(post_type)
-                    if not allowed:
-                        logger.warning(f"💰 {budget_reason} - research suggested {post_type} but budget exhausted")
-                        # Don't fallback to junk - just use text with URL
-                        post_type = "text"
+            if image_count >= 5:
+                # No media budget - just use text (skip research to save AI calls)
+                logger.info(f"💰 Media budget exhausted ({image_count}/5) - using text (saved research API call)")
+                post_type = "text"
+                research_result = {'format': 'TEXT', 'style_notes': '', 'reasoning': 'Budget exhausted'}
             else:
-                # No researcher available - use simple URL-based logic
-                post_type = "text" if story_url else "infographic"
-                logger.info(f"No researcher - using {'text (has URL)' if story_url else 'infographic (no URL)'}")
+                # We have budget - do ONE efficient research call
+                research_result = {'format': 'TEXT', 'style_notes': '', 'reasoning': 'Default'}
+
+                if self.content_researcher:
+                    logger.info("🔬 Researching best content format...")
+                    research_result = self.content_researcher.research_topic(
+                        topic=topic,
+                        context=story_context,
+                        category=story.get('category', 'tech')
+                    )
+                    logger.info(f"Research: {research_result['format']} ({research_result.get('confidence', 'N/A')})")
+
+                    post_type = research_result['format'].lower()
+                    confidence = research_result.get('confidence', 'LOW')
+                    is_trending = research_result.get('is_trending', False)
+
+                    # For media types, check if worth it (combined into single decision)
+                    if post_type != 'text':
+                        # HIGH confidence + trending = always use media (no extra AI call)
+                        if confidence == 'HIGH' and is_trending:
+                            logger.info("✓ HIGH confidence + trending - using media")
+                        elif confidence == 'HIGH' or is_trending:
+                            # Good enough - use media
+                            logger.info(f"✓ {confidence} confidence, trending={is_trending} - using media")
+                        else:
+                            # LOW/MEDIUM confidence + not trending = save budget, use text
+                            logger.info(f"🧠 LOW confidence, not trending - saving budget, using text")
+                            post_type = "text"
+                else:
+                    # No researcher - simple logic (no API call)
+                    post_type = "text" if story_url else "infographic"
+                    logger.info(f"No researcher - using {'text' if story_url else 'infographic'}")
 
             logger.info(f"Selected post type: {post_type}")
 
@@ -1177,17 +1271,18 @@ SUGGESTED_HASHTAGS: <2-3 relevant hashtags or "none">
                 # No researcher - generate simple prompt
                 video_prompt = f"Futuristic tech visualization about {topic[:50]}, neon lights, data streams, cinematic"
 
-            # Generate caption
-            caption_prompt = f"""Write a SHORT, viral-worthy tweet caption for a tech video.
+            # Generate caption - dry, cynical style
+            caption_prompt = f"""{BIG_BOSS_PERSONA}
+
+Write a SHORT caption for this video.
 
 TOPIC: {topic}
-VIDEO STYLE: {style_notes or 'Futuristic tech visualization'}
 
 Requirements:
-- 80-120 characters MAX
-- Creates curiosity
-- Sounds human, not robotic
+- 60-100 characters
+- Dry wit or cynical observation
 - NO hashtags, NO emojis
+- Creates curiosity
 
 CAPTION:"""
 
@@ -1351,7 +1446,7 @@ Now generate for the article above.
             meme_local_path = None
             caption = None
 
-            for meme in memes[:10]:  # Check top 10 candidates
+            for meme in memes[:3]:  # Check top 3 candidates only (cost efficient - already sorted by score)
                 logger.info(f"Evaluating meme: {meme.get('title', '')[:40]}... from {meme.get('source', '')}")
 
                 # AI validates safety and engagement
@@ -1367,14 +1462,14 @@ Now generate for the article above.
                         approved_meme = meme
                         caption = validation.get('suggested_caption', '')
 
-                        # Generate caption if not provided
+                        # Generate caption if not provided - dry wit style
                         if not caption:
-                            caption_prompt = f"""Write a witty caption for sharing this meme.
+                            caption_prompt = f"""Write a short, witty caption for this meme.
 
 MEME: {meme.get('title', '')}
 TOPIC: {topic}
 
-Requirements: 50-120 chars, witty, no hashtags.
+Requirements: 50-100 chars, dry humor, no hashtags, no emojis.
 
 CAPTION:"""
                             caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
@@ -1442,13 +1537,13 @@ Return ONLY a comma-separated list of concepts (2-4 words each):"""
                 # Fallback to simple prompt
                 infographic_visual_prompt = f"Clean professional infographic explaining {topic[:50]}. Blue and white color scheme, icons and diagrams, educational visualization, minimalist tech style."
 
-            # Generate caption
-            caption_prompt = f"""Write a caption for an educational infographic.
+            # Generate caption - informative but casual
+            caption_prompt = f"""Write a caption for this infographic.
 
 TOPIC: {topic}
-KEY CONCEPTS: {', '.join(key_points)}
+KEY POINTS: {', '.join(key_points)}
 
-Requirements: 80-130 chars, informative, casual tone, no hashtags.
+Requirements: 80-120 chars, informative but casual, no hashtags, no emojis.
 
 CAPTION:"""
 
@@ -1476,76 +1571,50 @@ CAPTION:"""
             logger.info(f"Infographic strategy ready: {infographic_visual_prompt[:50]}...")
 
         else:
-            # Generate Hacker News Style Post with REAL URL
-            logger.info(f"Generating HN-style post for: {topic}")
+            # Generate text post - dry, cynical style
+            logger.info(f"Generating text post for: {topic}")
 
             if story_url:
-                # We have a REAL URL from news fetcher!
                 logger.info(f"Using real URL: {story_url}")
-                post_prompt = f"""Write a casual, engaging tweet about this tech news.
+                post_prompt = f"""{BIG_BOSS_PERSONA}
 
-ARTICLE CONTEXT:
-{story_context}
+Write a tweet about this news.
 
-Title: "{topic}"
+CONTEXT:
+{story_context[:500]}
+
+Topic: "{topic}"
 URL: {story_url}
 
-TONE: Sound HUMAN and CASUAL, not like a bot or corporate account. Be conversational.
+STYLE (pick one):
+1. "[Fact]. [Short reaction]."
+2. "[What happened]. [Cynical observation]."
+3. "[Bold statement]. [Why it matters]."
 
-IMPORTANT: Just write the tweet directly. DO NOT include style labels like "Style A:", "Style B:", etc.
-
-Pick ONE of these approaches (but don't label it):
-
-Approach 1 - Statement + Short reaction:
-"[Bold statement]. [Short punchy reaction]."
-
-Approach 2 - Fact + Skeptical take:
-"[Interesting fact]. [Slightly skeptical comment]."
-
-Approach 3 - Direct observation:
-"[What's happening]. [Why it matters]."
-
-CONSTRAINTS:
-- Total: Under 280 chars (including URL)
-- Use EXACT URL provided: {story_url}
+RULES:
+- Under 280 chars total (including URL)
+- Include the URL
+- Short, punchy, no hype
 - NO hashtags, NO emojis
-- NO style labels ("Style A:", "**Style B:**", etc.)
-- NO formal questions like "How will this impact..." or "What does this mean for..."
-- NO "We" or "Check out" or "Read more"
-- NO US-centric language ("home soil", "came home", "stateside", "domestic")
-- Global perspective - don't assume US is "home"
-- Just write the tweet directly, nothing else
 
-GOOD Examples (SHORT, PUNCHY, CASUAL, GLOBAL):
-{chr(10).join([ex[2:] for ex in self.tone_validator.get_good_examples()])}
-
-BAD Examples (NEVER DO THIS):
-{chr(10).join(self.tone_validator.get_bad_examples())}
-
-Generate the tweet:
+TWEET:
 """
             else:
-                # No URL available - text-only tweet
-                logger.info("No URL available, generating text-only post")
-                post_prompt = f"""Write an engaging developer-focused tweet about '{topic}'.
+                logger.info("No URL, generating text-only post")
+                post_prompt = f"""{BIG_BOSS_PERSONA}
 
-CRITICAL INSTRUCTIONS:
-1. DO NOT include any URLs - we don't have one
-2. Focus on the technology and its impact
-3. Ask a provocative question or make an interesting observation
-4. Be authentic and don't overhype
+Write a tweet about: {topic}
 
-Format:
-[Interesting fact or question about {topic}]
+STYLE:
+- Observation or cynical take
+- Short and punchy
+- No corporate speak
 
-[Technical insight or opinion that invites discussion]
-
-CONSTRAINTS:
-- Total length: Under 280 characters
+RULES:
+- Under 280 chars
 - NO hashtags, NO emojis, NO URLs
-- Be truthful and don't make up facts
 
-Example style: "The new model outperforms GPT-4 on reasoning tasks. But can it actually replace human developers? Probably not yet."
+TWEET:
 """
 
             try:
