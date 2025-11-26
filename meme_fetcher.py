@@ -103,10 +103,24 @@ class RedditSource(MemeSource):
 
 
 class GiphySource(MemeSource):
-    """Fetches trending GIFs from Giphy (free tier)."""
+    """Fetches trending GIFs from Giphy."""
 
-    # Giphy public beta key (rate limited but free)
-    PUBLIC_KEY = "dc6zaTOxFJmzC"
+    # Fallback public beta key (rate limited)
+    FALLBACK_KEY = "dc6zaTOxFJmzC"
+    _api_key = None
+
+    @classmethod
+    def _get_api_key(cls) -> str:
+        """Get Giphy API key from secrets, fallback to public key."""
+        if cls._api_key is None:
+            try:
+                from config import get_secret
+                cls._api_key = get_secret("GIPHY_API_KEY").strip()
+                logger.info("Using Giphy API key from secrets")
+            except Exception as e:
+                logger.debug(f"Giphy secret not found, using public key: {e}")
+                cls._api_key = cls.FALLBACK_KEY
+        return cls._api_key
 
     def get_source_name(self) -> str:
         return "Giphy"
@@ -123,10 +137,11 @@ class GiphySource(MemeSource):
 
         query = search_terms.get(category, 'funny tech')
         memes = []
+        api_key = self._get_api_key()
 
         try:
             # Try trending first
-            url = f"https://api.giphy.com/v1/gifs/search?api_key={self.PUBLIC_KEY}&q={query}&limit={limit}&rating=g"
+            url = f"https://api.giphy.com/v1/gifs/search?api_key={api_key}&q={query}&limit={limit}&rating=g"
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             data = response.json()

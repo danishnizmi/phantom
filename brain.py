@@ -101,6 +101,8 @@ class AgentBrain:
         self.model_names = []
         self.models = {}
         self._current_ai_eval = {}  # Stores AI evaluation for content styling
+        self._last_ai_call_time = 0  # Rate limiting for AI calls
+        self._ai_call_min_interval = 5  # Minimum seconds between AI calls
 
         # Dynamic model discovery from Vertex AI
         candidate_models = self._discover_available_models()
@@ -567,6 +569,15 @@ Write the caption:"""
         If require_url=True and tools are provided, validates that response contains real URLs.
         """
         import time
+
+        # Rate limiting: ensure minimum interval between AI calls
+        elapsed = time.time() - self._last_ai_call_time
+        if elapsed < self._ai_call_min_interval:
+            wait_time = self._ai_call_min_interval - elapsed
+            logger.debug(f"Rate limiting: waiting {wait_time:.1f}s before AI call")
+            time.sleep(wait_time)
+        self._last_ai_call_time = time.time()
+
         last_error = None
         max_retries_per_model = 2
         transient_error_codes = ['429', '503', '500', 'quota', 'rate', 'overloaded']
@@ -610,7 +621,7 @@ Write the caption:"""
                     is_transient = any(code in error_str for code in transient_error_codes)
 
                     if is_transient and retry < max_retries_per_model - 1:
-                        wait_time = (retry + 1) * 2  # Exponential backoff: 2s, 4s
+                        wait_time = (retry + 1) * 5  # Exponential backoff: 5s, 10s
                         logger.warning(f"⚠ {model_name} transient error, retrying in {wait_time}s... ({str(e)[:60]})")
                         time.sleep(wait_time)
                         continue
