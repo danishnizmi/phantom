@@ -62,32 +62,33 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# BIG BOSS PERSONA - Metal Gear Solid inspired tech commentary
+# BIG BOSS PERSONA - Metal Gear Solid inspired, but SUBTLE
 # "We're not tools of the algorithm" - @Patriot0xSystem from Outer Heaven
-BIG_BOSS_PERSONA = """You are BIG BOSS, a legendary figure commenting on tech/AI/crypto from Outer Heaven.
+BIG_BOSS_PERSONA = """You write for a tech account with a dry, cynical voice. Think veteran observer, not soldier cosplay.
 
-PERSONALITY TRAITS:
-- Battle-hardened veteran perspective on technology wars
-- Philosophical about AI, algorithms, and digital warfare
-- Cynical about corporate tech, but respects true innovation
-- Speaks in short, impactful statements like a soldier briefing
-- Occasionally references "the battlefield", "soldiers", "mission", "intel"
-- Sees tech news through the lens of power, control, and freedom
-- Distrusts "the system" but embraces technological sovereignty
-- No emojis, no hashtags - just raw intel delivery
+VOICE:
+- Dry wit, skeptical of hype
+- Short punchy statements
+- Observational, not preachy
+- Occasional subtle military reference (rare, not every post)
+- No emojis, no hashtags
 
-VOICE EXAMPLES:
-- "Another day, another front in the AI wars."
-- "They call it innovation. I call it arms race."
-- "This intel changes the battlefield."
-- "The algorithm doesn't pick sides. Neither do I."
-- "Crypto's not about money. It's about sovereignty."
+GOOD (subtle):
+- "Nvidia's throwing punches. Google's not backing down."
+- "Another AI model. Another promise. We'll see."
+- "Bitcoin dipped. Holders know the drill."
+- "Big claims from OpenAI. The proof is in the product."
 
-NEVER:
-- Sound corporate or marketing-speak
-- Use "exciting" or "amazing" or startup buzzwords
-- Be preachy or lecture
-- Overdo the military metaphors (subtle is better)
+BAD (overdone):
+- "Soldiers, this is your intel briefing..." (too much)
+- "The battlefield of innovation..." (cringe)
+- "Mission critical update..." (try-hard)
+
+RULES:
+- Sound like a seasoned tech observer, not a military cosplayer
+- Be cynical but not negative
+- Short and punchy beats long and dramatic
+- NO corporate speak, NO hype words
 """
 
 class AgentBrain:
@@ -733,20 +734,18 @@ WHY: [impact/relevance to {target_audience}]
             for i, s in enumerate(stories)
         ])
 
-        selection_prompt = f"""{BIG_BOSS_PERSONA}
+        selection_prompt = f"""Pick the best story for a cynical tech Twitter account.
 
-You're BIG BOSS, selecting intel to brief your followers on.
-
-AVAILABLE INTEL:
+STORIES:
 {story_list}
 
-SELECTION CRITERIA (as BIG BOSS):
-- Which story has the most strategic significance?
-- Which affects the digital battlefield most?
-- Which would soldiers in tech need to know about?
-- Prefer stories about power shifts, innovation, or market moves
+PICK BASED ON:
+- Most interesting to devs/tech people
+- Has visual potential (for video/meme)
+- Trending or controversial = good
+- Avoid boring corporate announcements
 
-Respond with ONLY the number (1-{len(stories)}) of your selection."""
+Respond with ONLY the number (1-{len(stories)})."""
 
         try:
             response = self._generate_with_fallback(selection_prompt).strip()
@@ -1273,17 +1272,16 @@ SUGGESTED_HASHTAGS: <2-3 relevant hashtags or "none">
                 # No researcher - generate simple prompt
                 video_prompt = f"Futuristic tech visualization about {topic[:50]}, neon lights, data streams, cinematic"
 
-            # Generate caption with Big Boss persona
+            # Generate caption - dry, cynical style
             caption_prompt = f"""{BIG_BOSS_PERSONA}
 
-Write a SHORT caption for a tech video as BIG BOSS.
+Write a SHORT caption for this video.
 
 TOPIC: {topic}
-VIDEO STYLE: {style_notes or 'Futuristic tech visualization'}
 
 Requirements:
-- 80-120 characters MAX
-- BIG BOSS voice - tactical, philosophical, no corporate speak
+- 60-100 characters
+- Dry wit or cynical observation
 - NO hashtags, NO emojis
 - Creates curiosity
 
@@ -1465,16 +1463,14 @@ Now generate for the article above.
                         approved_meme = meme
                         caption = validation.get('suggested_caption', '')
 
-                        # Generate caption if not provided - Big Boss style
+                        # Generate caption if not provided - dry wit style
                         if not caption:
-                            caption_prompt = f"""{BIG_BOSS_PERSONA}
-
-Write a witty caption for sharing this meme as BIG BOSS.
+                            caption_prompt = f"""Write a short, witty caption for this meme.
 
 MEME: {meme.get('title', '')}
 TOPIC: {topic}
 
-Requirements: 50-120 chars, dry wit, cynical humor, no hashtags.
+Requirements: 50-100 chars, dry humor, no hashtags, no emojis.
 
 CAPTION:"""
                             caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
@@ -1542,15 +1538,13 @@ Return ONLY a comma-separated list of concepts (2-4 words each):"""
                 # Fallback to simple prompt
                 infographic_visual_prompt = f"Clean professional infographic explaining {topic[:50]}. Blue and white color scheme, icons and diagrams, educational visualization, minimalist tech style."
 
-            # Generate caption with Big Boss persona
-            caption_prompt = f"""{BIG_BOSS_PERSONA}
-
-Write a caption for this intel briefing (infographic) as BIG BOSS.
+            # Generate caption - informative but casual
+            caption_prompt = f"""Write a caption for this infographic.
 
 TOPIC: {topic}
-KEY INTEL: {', '.join(key_points)}
+KEY POINTS: {', '.join(key_points)}
 
-Requirements: 80-130 chars, tactical briefing style, no hashtags.
+Requirements: 80-120 chars, informative but casual, no hashtags, no emojis.
 
 CAPTION:"""
 
@@ -1578,56 +1572,50 @@ CAPTION:"""
             logger.info(f"Infographic strategy ready: {infographic_visual_prompt[:50]}...")
 
         else:
-            # Generate Big Boss style post
-            logger.info(f"Generating Big Boss post for: {topic}")
+            # Generate text post - dry, cynical style
+            logger.info(f"Generating text post for: {topic}")
 
             if story_url:
-                # We have a REAL URL from news fetcher!
                 logger.info(f"Using real URL: {story_url}")
                 post_prompt = f"""{BIG_BOSS_PERSONA}
 
-Write a tweet about this tech intel as BIG BOSS.
+Write a tweet about this news.
 
-INTEL BRIEFING:
-{story_context}
+CONTEXT:
+{story_context[:500]}
 
 Topic: "{topic}"
 URL: {story_url}
 
-APPROACH (pick one, don't label it):
-1. Tactical observation: "[What's happening]. [Why soldiers should care]."
-2. Cynical take: "[Fact]. [Skeptical one-liner]."
-3. Battlefield insight: "[Bold statement]. [Strategic implication]."
+STYLE (pick one):
+1. "[Fact]. [Short reaction]."
+2. "[What happened]. [Cynical observation]."
+3. "[Bold statement]. [Why it matters]."
 
-CONSTRAINTS:
-- Total: Under 280 chars (including URL)
-- Use EXACT URL: {story_url}
-- BIG BOSS voice - no corporate speak, no hype
+RULES:
+- Under 280 chars total (including URL)
+- Include the URL
+- Short, punchy, no hype
 - NO hashtags, NO emojis
-- Just the tweet, nothing else
 
-BIG BOSS TWEET:
+TWEET:
 """
             else:
-                # No URL available - text-only tweet
-                logger.info("No URL available, generating text-only Big Boss post")
+                logger.info("No URL, generating text-only post")
                 post_prompt = f"""{BIG_BOSS_PERSONA}
 
-Write a tweet about this topic as BIG BOSS (no URL available).
+Write a tweet about: {topic}
 
-TOPIC: {topic}
+STYLE:
+- Observation or cynical take
+- Short and punchy
+- No corporate speak
 
-APPROACH:
-- Share a tactical observation or cynical insight
-- Sound like a veteran briefing soldiers on tech
-- Short, punchy, no corporate speak
-
-CONSTRAINTS:
-- Under 280 characters
+RULES:
+- Under 280 chars
 - NO hashtags, NO emojis, NO URLs
-- BIG BOSS voice only
 
-BIG BOSS TWEET:
+TWEET:
 """
 
             try:

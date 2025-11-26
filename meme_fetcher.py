@@ -347,31 +347,35 @@ class ContentResearcher:
         # Get trending context if available
         trending_context = self._get_trending_context(category)
 
-        prompt = f"""You are a content strategist for a tech Twitter account. Analyze this topic and recommend the BEST content format.
+        prompt = f"""You are a viral content strategist. Pick the format that will get the MOST engagement.
 
 TOPIC: {topic}
 CATEGORY: {category}
-ARTICLE CONTEXT: {context[:800]}
-{f'CURRENTLY TRENDING: {trending_context}' if trending_context else ''}
+CONTEXT: {context[:600]}
+{f'TRENDING NOW: {trending_context}' if trending_context else ''}
 
-AVAILABLE FORMATS:
-1. TEXT - Simple tweet with article link (Twitter shows preview card)
-2. MEME - Funny/ironic image from internet + witty caption
-3. INFOGRAPHIC - Educational visual explaining concepts
-4. VIDEO - Animated visual (expensive, use sparingly for HIGH impact topics)
+FORMATS (ranked by engagement potential):
+1. VIDEO - AI-generated cinematic visuals. BEST for: major AI/tech news, product launches, futuristic topics, anything visually dramatic. Styles: cyberpunk, anime, data storms, neon aesthetics.
+2. MEME - Fetched from Reddit/internet. BEST for: ironic takes, relatable dev frustrations, crypto drama, absurd corporate news.
+3. INFOGRAPHIC - Educational visual. BEST for: comparisons, stats, "how X works", technical explainers.
+4. TEXT - Link + caption. BEST for: breaking news where speed matters, simple announcements.
 
-DECISION CRITERIA:
-- TEXT: Default for news with good link preview. Low effort, still effective.
-- MEME: Story is ironic, absurd, or relatable frustration. Community will appreciate humor.
-- INFOGRAPHIC: Educational content, comparisons, stats, "how it works" topics.
-- VIDEO: Only for MAJOR announcements or highly visual processes. Very expensive.
+WHEN TO USE VIDEO (be aggressive):
+- Topic involves AI, future tech, major announcements = VIDEO
+- Topic has visual potential (cyberpunk, digital, futuristic) = VIDEO
+- Topic is trending and needs impact = VIDEO
+- Don't be shy about VIDEO - it gets 3x more engagement
 
-Analyze and respond in this EXACT format:
-RECOMMENDED_FORMAT: <TEXT|MEME|INFOGRAPHIC|VIDEO>
+WHEN TO USE MEME:
+- Topic is absurd, ironic, or frustrating
+- Community will relate (dev pain, crypto drama, corp fails)
+
+Respond EXACTLY:
+RECOMMENDED_FORMAT: <VIDEO|MEME|INFOGRAPHIC|TEXT>
 CONFIDENCE: <HIGH|MEDIUM|LOW>
-REASONING: <one line explaining why>
-STYLE_NOTES: <specific style guidance if MEME/INFOGRAPHIC/VIDEO, or "N/A" for TEXT>
-IS_TRENDING: <YES|NO - is this topic currently hot?>
+REASONING: <why this format wins>
+STYLE_NOTES: <for VIDEO: suggest aesthetic (cyberpunk/anime/etc). For MEME: suggest tone>
+IS_TRENDING: <YES|NO>
 """
 
         try:
@@ -435,31 +439,30 @@ IS_TRENDING: <YES|NO - is this topic currently hot?>
         source = meme.get('source', '')
         score = meme.get('score', 0)
 
-        prompt = f"""Evaluate this meme for BIG BOSS's tech Twitter account (@Patriot0xSystem from Outer Heaven).
+        prompt = f"""Evaluate this meme for a cynical tech Twitter account.
 
 MEME:
 - Title: "{title}"
 - Source: {source}
-- Popularity Score: {score}
-- Topic Context: {topic}
+- Score: {score}
+- Topic: {topic}
 
-EVALUATE:
-1. SAFE? (No offensive content, politics, NSFW, slurs, controversial takes)
-2. RELEVANT? (Fits tech/AI/crypto/finance audience)
-3. ENGAGING? (Actually funny/relatable, not cringe)
+CHECK:
+1. SAFE? (No politics, NSFW, slurs, controversial)
+2. RELEVANT? (Tech/AI/crypto/finance audience)
+3. FUNNY? (Actually good, not cringe)
 
-Be STRICT. When in doubt, reject. We'd rather post nothing than something bad.
+Be strict. Skip anything questionable.
 
-If APPROVED, suggest a BIG BOSS style caption:
-- Cynical, dry wit
-- Military/tactical undertones (subtle)
-- No corporate speak, no emojis
-- 50-100 chars
+If APPROVED, write a SHORT caption (50-100 chars):
+- Dry wit, cynical observation
+- No emojis, no hashtags
+- Sound like a tired dev, not a marketer
 
-Respond EXACTLY:
+Respond:
 APPROVED: YES or NO
-REASON: <one line>
-SUGGESTED_CAPTION: <BIG BOSS style caption if approved, "N/A" if not>
+REASON: <why>
+SUGGESTED_CAPTION: <caption or N/A>
 """
 
         try:
@@ -489,29 +492,37 @@ SUGGESTED_CAPTION: <BIG BOSS style caption if approved, "N/A" if not>
 
     def generate_video_prompt(self, topic: str, context: str, style_notes: str) -> Optional[str]:
         """
-        Generate a video prompt with built-in self-validation (single AI call).
+        Generate a creative, artistic video prompt. Research trending styles first.
         Returns validated prompt or None if can't create good one.
         """
-        # Combined generation + validation in ONE call to save API costs
-        prompt = f"""Create a VIDEO generation prompt for this topic. Self-validate before responding.
+        # Creative video styles that perform well on social media
+        prompt = f"""You're a creative director making viral AI videos. Create a VISUALLY STUNNING prompt.
 
 TOPIC: {topic}
-CONTEXT: {context[:500]}
-STYLE GUIDANCE: {style_notes}
+CONTEXT: {context[:400]}
+{f'STYLE HINT: {style_notes}' if style_notes else ''}
 
-VIDEO STYLES THAT WORK:
-- Cyberpunk: Neon cities, holograms, rain, pink/blue lights
-- Data visualization: 3D charts, floating numbers, clean aesthetic
-- Tech montage: Code flowing, circuits lighting up, futuristic UI
+TRENDING VIDEO AESTHETICS (pick one that fits):
+- CYBERPUNK: Neon rain, holographic UI, pink/blue city lights, Blade Runner vibes
+- ANIME/MANGA: Dynamic action lines, cel-shaded, dramatic lighting, anime character silhouettes
+- DIGITAL SAMURAI: Futuristic warrior, glowing katana, cherry blossoms + circuits
+- DATA STORM: 3D data visualization, floating numbers, matrix rain, neural networks
+- RETRO SYNTH: 80s grid, sunset gradients, chrome text, vaporwave aesthetic
+- GHOST IN SHELL: Cyborg, digital consciousness, floating code, philosophical tech
+- AKIRA STYLE: Motorcycle lights, neon Tokyo, explosive energy, red cape flowing
 
-REQUIREMENTS (self-validate):
-1. SPECIFIC enough (not vague like "cool tech stuff")
-2. ACHIEVABLE by AI video generation
-3. RELEVANT to the topic
-4. PROFESSIONAL for business account
-5. 100-200 characters
+MAKE IT VISUAL AND CINEMATIC:
+- Think "would this get views on TikTok/X?"
+- Dramatic lighting, movement, energy
+- No boring corporate visuals
 
-Only respond with the final prompt. If you can't create a good one, respond "CANNOT_GENERATE".
+PROMPT REQUIREMENTS:
+- 100-200 characters
+- SPECIFIC scene description
+- Include lighting/color direction
+- Cinematic camera movement if relevant
+
+Respond with ONLY the video prompt. If topic doesn't fit any style, respond "CANNOT_GENERATE".
 
 VIDEO_PROMPT:"""
 
