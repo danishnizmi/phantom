@@ -51,13 +51,12 @@ except ImportError:
     InfluencerAnalyzer = None
 
 try:
-    from meme_fetcher import MemeFetcher, MemeAnalyzer, TrendResearcher
+    from meme_fetcher import MemeFetcher, ContentResearcher
     MEME_FETCHER_AVAILABLE = True
 except ImportError:
     MEME_FETCHER_AVAILABLE = False
     MemeFetcher = None
-    MemeAnalyzer = None
-    TrendResearcher = None
+    ContentResearcher = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -163,22 +162,20 @@ class AgentBrain:
             except Exception as e:
                 logger.warning(f"Influencer analyzer not available: {e}")
 
-        # Initialize meme fetcher for real memes from Reddit/Imgflip
+        # Initialize agentic content system (meme fetcher + content researcher)
         self.meme_fetcher = None
-        self.meme_analyzer = None
-        self.trend_researcher = None
+        self.content_researcher = None
         if MEME_FETCHER_AVAILABLE:
             try:
                 self.meme_fetcher = MemeFetcher()
-                self.meme_analyzer = MemeAnalyzer(self._generate_with_fallback)
-                self.trend_researcher = TrendResearcher(
+                self.content_researcher = ContentResearcher(
                     self._generate_with_fallback,
                     self.influencer_analyzer
                 )
-                logger.info("✓ Meme fetcher initialized (Reddit, free sources)")
-                logger.info("✓ Trend researcher initialized for viral content")
+                logger.info("✓ Meme fetcher initialized (Reddit, Giphy, Imgflip)")
+                logger.info("✓ Content researcher initialized for agentic decisions")
             except Exception as e:
-                logger.warning(f"Meme fetcher not available: {e}")
+                logger.warning(f"Agentic content system not available: {e}")
 
     def _discover_available_models(self) -> list:
         """
@@ -1115,71 +1112,37 @@ SUGGESTED_HASHTAGS: <2-3 relevant hashtags or "none">
         logger.info(f"Selected Topic: {topic}")
         logger.info(f"Article Context: {story_context[:150]}...")
 
-        # Decide format
+        # AGENTIC FORMAT DECISION: Research first, then decide
         if Config.BUDGET_MODE:
             logger.info("BUDGET_MODE enabled, using text-only format")
             post_type = "text"
+            research_result = {'format': 'TEXT', 'style_notes': '', 'reasoning': 'Budget mode'}
         else:
-            # SIMPLE RULE: If we have a URL, use TEXT (Twitter shows link preview)
-            # Only generate media for MEME or when NO URL available
-            if story_url:
-                # We have a link - Twitter will show preview card
-                # Only exception: MEME format (ironic/funny commentary)
+            # Use ContentResearcher for intelligent format decision
+            research_result = {'format': 'TEXT', 'style_notes': '', 'reasoning': 'Default'}
 
-                # Check if this story is meme-worthy (ironic, absurd, contradictory)
-                meme_check_prompt = f"""Is this news story suitable for a MEME? Answer YES or NO.
+            if self.content_researcher:
+                logger.info("🔬 Researching best content format...")
+                research_result = self.content_researcher.research_topic(
+                    topic=topic,
+                    context=story_context,
+                    category=story.get('category', 'tech')
+                )
+                logger.info(f"Research: {research_result['format']} ({research_result.get('confidence', 'N/A')}) - {research_result.get('reasoning', '')[:60]}")
 
-TOPIC: {topic}
-CONTEXT: {story_context[:500]}
+                post_type = research_result['format'].lower()
 
-A story is meme-worthy if it's:
-- Ironic or contradictory (company does opposite of what they said)
-- Absurd or ridiculous situation
-- Relatable frustration for tech community
-- Perfect for sarcastic commentary
-
-Answer ONLY "YES" or "NO":"""
-
-                try:
-                    meme_check = self._generate_with_fallback(meme_check_prompt).strip().upper()
-                    if "YES" in meme_check:
-                        # Check if we have meme budget
-                        allowed, _, budget_reason = self._check_media_budget('meme')
-                        if allowed:
-                            post_type = "meme"
-                            logger.info(f"📸 Meme-worthy story detected! Using meme format.")
-                        else:
-                            post_type = "text"
-                            logger.info(f"Story is meme-worthy but {budget_reason}. Using text with URL.")
-                    else:
+                # Budget check for non-text formats
+                if post_type != 'text':
+                    allowed, _, budget_reason = self._check_media_budget(post_type)
+                    if not allowed:
+                        logger.warning(f"💰 {budget_reason} - research suggested {post_type} but budget exhausted")
+                        # Don't fallback to junk - just use text with URL
                         post_type = "text"
-                        logger.info(f"📰 Has URL - using text format (Twitter shows link preview)")
-                except Exception as e:
-                    logger.warning(f"Meme check failed: {e}, defaulting to text")
-                    post_type = "text"
             else:
-                # No URL - can generate visual content
-                logger.info("No URL available - can use visual media")
-
-                # Check media distribution for variety
-                media_rec = self._get_media_recommendation()
-                suggested_type = media_rec.get('suggested_type')
-
-                if suggested_type and suggested_type != 'text':
-                    allowed, fallback_type, budget_reason = self._check_media_budget(suggested_type)
-                    if allowed:
-                        post_type = suggested_type
-                        logger.info(f"Using suggested media type: {post_type}")
-                    else:
-                        post_type = "infographic"  # Default visual when no URL
-                else:
-                    post_type = "infographic"  # Default visual when no URL
-
-                # Final budget check
-                allowed, fallback_type, budget_reason = self._check_media_budget(post_type)
-                if not allowed:
-                    logger.warning(f"💰 {budget_reason} - falling back to text")
-                    post_type = "text"
+                # No researcher available - use simple URL-based logic
+                post_type = "text" if story_url else "infographic"
+                logger.info(f"No researcher - using {'text (has URL)' if story_url else 'infographic (no URL)'}")
 
             logger.info(f"Selected post type: {post_type}")
 
@@ -1190,130 +1153,69 @@ Answer ONLY "YES" or "NO":"""
         }
 
         if post_type == "video":
-            # VIRAL VIDEO: Use trend research to create eye-catching content
-            logger.info(f"🎬 Creating viral video for: {topic}")
+            # AGENTIC VIDEO: Research-based prompt generation with validation
+            logger.info(f"🎬 Creating video for: {topic}")
 
-            # Check viral potential and get recommended style
-            viral_style = 'cyberpunk'  # Default to eye-catching cyberpunk
-            viral_hook = ''
+            style_notes = research_result.get('style_notes', '')
+            video_prompt = None
 
-            if self.trend_researcher:
-                try:
-                    viral_analysis = self.trend_researcher.get_viral_potential(topic, story_context)
-                    viral_style = viral_analysis.get('recommended_style', 'cyberpunk')
-                    viral_hook = viral_analysis.get('hook', '')
-                    logger.info(f"Viral analysis: potential={viral_analysis['viral_potential']}, style={viral_style}")
+            # Use ContentResearcher to generate and validate video prompt
+            if self.content_researcher:
+                video_prompt = self.content_researcher.generate_video_prompt(
+                    topic=topic,
+                    context=story_context,
+                    style_notes=style_notes
+                )
 
-                    # Get style-specific video prompt
-                    if viral_style != 'text_only':
-                        style_prompt = self.trend_researcher.get_video_prompt_for_style(
-                            topic, viral_style, story_context
-                        )
-                        logger.info(f"Using {viral_style} style for viral appeal")
-                except Exception as e:
-                    logger.warning(f"Viral analysis failed: {e}, using default cyberpunk style")
+                if not video_prompt:
+                    logger.warning("Could not generate valid video prompt - skipping video")
+                    # Return None to skip this post entirely (no fallback to junk)
+                    return None
 
-            # Generate video with viral style
-            script_prompt = f"""Generate a tweet with VIRAL VIDEO for this tech news.
+                logger.info(f"Generated video prompt: {video_prompt[:80]}...")
+            else:
+                # No researcher - generate simple prompt
+                video_prompt = f"Futuristic tech visualization about {topic[:50]}, neon lights, data streams, cinematic"
 
-ARTICLE CONTEXT:
-{story_context}
+            # Generate caption
+            caption_prompt = f"""Write a SHORT, viral-worthy tweet caption for a tech video.
 
 TOPIC: {topic}
-SOURCE URL: {story_url if story_url else 'No URL'}
+VIDEO STYLE: {style_notes or 'Futuristic tech visualization'}
 
-VIRAL STYLE: {viral_style.upper()}
-{f'SUGGESTED HOOK: {viral_hook}' if viral_hook else ''}
-
-You MUST provide BOTH parts in this EXACT format:
-CAPTION: <your tweet text - short, punchy, viral-worthy>
-PROMPT: <detailed video description in {viral_style} style>
-
-CAPTION REQUIREMENTS:
-- Short, punchy, click-worthy (100-150 chars)
-- Creates curiosity or FOMO
+Requirements:
+- 80-120 characters MAX
+- Creates curiosity
+- Sounds human, not robotic
 - NO hashtags, NO emojis
-- Sound human and casual
 
-VIDEO PROMPT - USE THIS STYLE: {viral_style.upper()}
-
-CYBERPUNK style:
-- Neon-lit futuristic city, holographic displays, rain-soaked streets
-- Glowing data streams, circuit patterns, lens flares
-- Dark blues and hot pinks, dramatic lighting
-
-ANIME style:
-- Dynamic action poses, speed lines, dramatic lighting
-- Bold colors, expressive movement, energy effects
-- Epic reveal with particle effects
-
-DATA_VIZ style:
-- 3D charts rising from surface, glowing data points
-- Numbers floating in space, smooth animations
-- Clean modern aesthetic, professional look
-
-EXPLAINER style:
-- Clean white background, bold graphics
-- Step-by-step breakdown, icons animating
-- Modern motion graphics, clear typography
-
-Generate video prompt that matches the {viral_style.upper()} style for THIS topic.
-Make it visually STUNNING and shareable!
-
-Example for CYBERPUNK:
-CAPTION: "The future of AI just got real. This changes everything."
-PROMPT: "Cyberpunk cityscape with neon holographic displays showing AI neural networks, rain-soaked streets reflecting pink and blue lights, data streams flowing between buildings, camera flies through holographic code visualization"
-
-"""
+CAPTION:"""
 
             try:
-                response = self._generate_with_fallback(script_prompt)
-                logger.info(f"Video generation response: {response[:100]}...")
-
-                if "CAPTION:" in response and "PROMPT:" in response:
-                    parts = response.split("PROMPT:")
-                    caption_part = parts[0].replace("CAPTION:", "").strip()
-                    visual_prompt = parts[1].strip()
-
-                    # Validate caption is complete
-                    if len(caption_part) < 20 or not any(caption_part.endswith(p) for p in ['.', '!', '?']):
-                        logger.warning(f"Caption seems incomplete: {caption_part}")
-                        caption_part = f"{caption_part}. What's your take?"
-
-                    # Reserve space for URL if needed (Twitter limit 280 chars)
-                    # Estimate URL space: typical URL ~100 chars + "\n\n" = 104 chars
-                    # So caption should be max 175 chars to leave room
-                    max_caption_len = 175 if story_url else 280
-                    caption = caption_part[:max_caption_len]
-
-                    # Validate visual prompt is detailed enough
-                    if len(visual_prompt) < 50:
-                        logger.warning(f"Video prompt too short ({len(visual_prompt)} chars): {visual_prompt}")
-                        raise ValueError(f"Video prompt must be at least 50 characters, got {len(visual_prompt)}")
-
-                    logger.info(f"Video prompt: {visual_prompt[:100]}...")
-                else:
-                    logger.error("Response missing CAPTION: or PROMPT: markers")
-                    raise ValueError("Invalid format - missing CAPTION or PROMPT")
-
+                caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
+                if len(caption) > 150:
+                    caption = caption[:147] + "..."
             except Exception as e:
-                logger.error(f"Failed to generate video script: {e}")
-                raise
+                logger.error(f"Caption generation failed: {e}")
+                return None  # Don't post garbage
 
-            # For video posts with URL, add URL to caption for citation
-            if story_url:
-                if story_url not in caption:
-                    # Add URL to caption (Twitter limit is 280 chars)
-                    if len(caption) + len(story_url) + 4 <= 280:  # 4 for "\n\n" and buffer
-                        caption = f"{caption}\n\n{story_url}"
-                    else:
-                        # Truncate caption to fit URL within 280 char limit
-                        max_cap_len = 280 - len(story_url) - 7  # 7 for "...\n\n"
-                        caption = f"{caption[:max_cap_len]}...\n\n{story_url}"
-                    logger.info(f"Added URL to video caption: {story_url}")
+            # Validate caption makes sense
+            if len(caption) < 20 or not caption:
+                logger.warning("Caption too short or empty - skipping")
+                return None
+
+            # Add URL to caption if available
+            if story_url and story_url not in caption:
+                if len(caption) + len(story_url) + 4 <= 280:
+                    caption = f"{caption}\n\n{story_url}"
+                else:
+                    max_len = 280 - len(story_url) - 7
+                    caption = f"{caption[:max_len]}...\n\n{story_url}"
 
             strategy["content"] = caption
-            strategy["video_prompt"] = visual_prompt
+            strategy["video_prompt"] = video_prompt
+            strategy["source_url"] = story_url
+            logger.info(f"Video strategy ready: {caption[:50]}...")
 
         elif post_type == "image":
             # Generate Image Prompt and Tweet Text with FULL article context
@@ -1429,195 +1331,149 @@ Now generate for the article above.
             strategy["image_prompt"] = visual_prompt
 
         elif post_type == "meme":
-            # AGENTIC MEME: Fetch real memes from Reddit, analyze for safety, then post
-            logger.info(f"🔍 Fetching trending meme for: {topic}")
+            # AGENTIC MEME: Research from multiple sources, validate with AI, no fallbacks
+            logger.info(f"🔍 Researching memes for: {topic}")
             category = story.get('category', 'tech')
 
-            fetched_meme = None
+            if not self.meme_fetcher or not self.content_researcher:
+                logger.warning("Meme fetcher or researcher not available - skipping")
+                return None
+
+            # Research memes from all sources (Reddit, Giphy, Imgflip)
+            memes = self.meme_fetcher.research_memes(category, topic)
+
+            if not memes:
+                logger.warning("No memes found from any source - skipping post")
+                return None  # No fallback - just skip
+
+            # Try to find an approved meme
+            approved_meme = None
             meme_local_path = None
+            caption = None
 
-            # Try to fetch a real meme from Reddit
-            if self.meme_fetcher and self.meme_analyzer:
-                try:
-                    # Fetch trending memes for this category
-                    meme = self.meme_fetcher.get_best_meme_for_topic(topic, category)
+            for meme in memes[:10]:  # Check top 10 candidates
+                logger.info(f"Evaluating meme: {meme.get('title', '')[:40]}... from {meme.get('source', '')}")
 
-                    if meme:
-                        logger.info(f"Found meme: {meme.get('title', '')[:50]}...")
+                # AI validates safety and engagement
+                validation = self.content_researcher.validate_meme(meme, topic)
 
-                        # AI analyzes if safe and engaging
-                        analysis = self.meme_analyzer.analyze_meme(meme, topic)
-                        logger.info(f"Meme analysis: safe={analysis['safe']}, engaging={analysis['engaging']}")
+                if validation['approved']:
+                    logger.info(f"✓ Meme approved: {validation['reason']}")
 
-                        if analysis['should_post']:
-                            fetched_meme = meme
-                            meme_local_path = meme.get('local_path')
-                            logger.info(f"✓ Meme approved for posting!")
+                    # Try to download
+                    meme_local_path = self.meme_fetcher.download_meme(meme['url'])
 
-                            # Use AI suggested caption or generate one
-                            if analysis.get('suggested_caption'):
-                                caption = analysis['suggested_caption']
-                            else:
-                                # Generate caption that references the meme
-                                caption_prompt = f"""Write a short, witty caption for sharing this meme about tech news.
+                    if meme_local_path:
+                        approved_meme = meme
+                        caption = validation.get('suggested_caption', '')
 
-MEME TITLE: {meme.get('title', '')}
-NEWS TOPIC: {topic}
+                        # Generate caption if not provided
+                        if not caption:
+                            caption_prompt = f"""Write a witty caption for sharing this meme.
 
-Requirements:
-- 50-150 characters
-- Witty, relatable to tech community
-- Don't explain the meme, just introduce it
-- NO hashtags
-
-Caption:"""
-                                caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
-                        else:
-                            logger.warning(f"Meme rejected: {analysis['reason']}")
-                            # Clean up downloaded file
-                            if meme.get('local_path'):
-                                try:
-                                    import os
-                                    os.remove(meme['local_path'])
-                                except:
-                                    pass
-
-                except Exception as e:
-                    logger.warning(f"Meme fetch failed: {e}")
-
-            # If no fetched meme, fall back to text post (don't generate AI junk)
-            if not fetched_meme:
-                logger.info("No suitable meme found, falling back to text post")
-                post_type = "text"
-                strategy["type"] = "text"
-
-                # Generate a witty text-only post
-                text_prompt = f"""Write a witty, meme-style tweet about this tech news (NO image needed).
-
+MEME: {meme.get('title', '')}
 TOPIC: {topic}
-CONTEXT: {story_context[:300]}
 
-Requirements:
-- Short, punchy (100-200 chars)
-- Sarcastic, ironic, or observational humor
-- Relatable to tech community
-- End with the URL
+Requirements: 50-120 chars, witty, no hashtags.
 
-Tweet:"""
-                caption = self._generate_with_fallback(text_prompt).strip()
+CAPTION:"""
+                            caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
 
-                if story_url and story_url not in caption:
-                    if len(caption) + len(story_url) + 4 <= 280:
-                        caption = f"{caption}\n\n{story_url}"
+                        break
                     else:
-                        max_len = 280 - len(story_url) - 7
-                        caption = f"{caption[:max_len]}...\n\n{story_url}"
+                        logger.warning("Download failed, trying next meme")
+                else:
+                    logger.debug(f"Meme rejected: {validation['reason']}")
 
-                strategy["content"] = [caption]
-                strategy["source_url"] = story_url
-            else:
-                # We have a fetched meme - set up strategy
-                if story_url and story_url not in caption:
-                    if len(caption) + len(story_url) + 4 <= 280:
-                        caption = f"{caption}\n\n{story_url}"
-                    else:
-                        max_len = 280 - len(story_url) - 7
-                        caption = f"{caption[:max_len]}...\n\n{story_url}"
+            if not approved_meme:
+                logger.warning("No meme passed validation - skipping post entirely")
+                return None  # No fallback to junk
 
-                strategy["content"] = caption
-                strategy["meme_local_path"] = meme_local_path  # Path to downloaded meme
-                strategy["meme_source"] = fetched_meme.get('permalink', '')  # Reddit source
-                strategy["meme_title"] = fetched_meme.get('title', '')
+            # Add URL to caption
+            if story_url and story_url not in caption:
+                if len(caption) + len(story_url) + 4 <= 280:
+                    caption = f"{caption}\n\n{story_url}"
+                else:
+                    max_len = 280 - len(story_url) - 7
+                    caption = f"{caption[:max_len]}...\n\n{story_url}"
+
+            strategy["content"] = caption
+            strategy["meme_local_path"] = meme_local_path
+            strategy["meme_source"] = approved_meme.get('permalink', approved_meme.get('source', ''))
+            strategy["meme_title"] = approved_meme.get('title', '')
+            strategy["source_url"] = story_url
+            logger.info(f"Meme strategy ready: {approved_meme.get('title', '')[:40]}...")
 
         elif post_type == "infographic":
-            # Generate educational infographic
-            logger.info(f"Generating infographic for: {topic}")
+            # AGENTIC INFOGRAPHIC: Validated prompts, no junk generation
+            logger.info(f"📊 Creating infographic for: {topic}")
 
-            # Extract key points from article context for infographic
-            key_points_prompt = f"""Extract 3-5 KEY CONCEPTS from this article for an educational infographic.
+            # Extract key points from article context
+            key_points_prompt = f"""Extract 3-5 KEY CONCEPTS from this article for an infographic.
 
-ARTICLE CONTEXT:
-{story_context}
+ARTICLE: {story_context[:600]}
 
-TOPIC: {topic}
+Return ONLY a comma-separated list of concepts (2-4 words each):"""
 
-Return ONLY a comma-separated list of short concepts (2-4 words each).
-Example: "Neural Networks, Attention Mechanism, Training Data, Model Size, Inference Speed"
-
-Key concepts:"""
-
-            key_points = []
             try:
                 key_points_response = self._generate_with_fallback(key_points_prompt)
                 key_points = [kp.strip() for kp in key_points_response.split(',')][:5]
-                logger.info(f"Extracted key points: {key_points}")
+                key_points = [kp for kp in key_points if len(kp) > 2]  # Filter empty
+                logger.info(f"Key points: {key_points}")
             except Exception as e:
                 logger.warning(f"Key points extraction failed: {e}")
-                key_points = ['Technology', 'Innovation', 'Digital']
+                return None  # No fallback
 
-            # Generate infographic caption
-            infographic_caption_prompt = f"""Write a caption for an educational infographic about:
+            if len(key_points) < 2:
+                logger.warning("Not enough key points extracted - skipping infographic")
+                return None
+
+            # Generate and validate infographic prompt
+            infographic_visual_prompt = None
+
+            if self.content_researcher:
+                infographic_visual_prompt = self.content_researcher.generate_infographic_prompt(
+                    topic=topic,
+                    context=story_context,
+                    key_points=key_points
+                )
+
+            if not infographic_visual_prompt:
+                # Fallback to simple prompt
+                infographic_visual_prompt = f"Clean professional infographic explaining {topic[:50]}. Blue and white color scheme, icons and diagrams, educational visualization, minimalist tech style."
+
+            # Generate caption
+            caption_prompt = f"""Write a caption for an educational infographic.
 
 TOPIC: {topic}
 KEY CONCEPTS: {', '.join(key_points)}
 
-Requirements:
-- 80-150 characters
-- Informative but casual tone
-- Sounds like a human sharing educational content
-- NO hashtags, NO emojis
-- End with punctuation
+Requirements: 80-130 chars, informative, casual tone, no hashtags.
 
-Good examples:
-- "Breaking down how transformers work. The attention mechanism visualized."
-- "AI model sizes compared. From GPT-2 to GPT-4, the scale is wild."
-- "Bitcoin mining explained. Proof-of-work in one graphic."
-
-Caption:"""
+CAPTION:"""
 
             try:
-                caption = self._generate_with_fallback(infographic_caption_prompt)
-                caption = caption.strip().strip('"')
-
-                # Validate caption
-                if len(caption) < 20 or not any(caption.endswith(p) for p in ['.', '!', '?']):
-                    caption = f"{caption}."
-
-                max_caption_len = 175 if story_url else 280
-                caption = caption[:max_caption_len]
-
+                caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
+                if len(caption) < 20:
+                    logger.warning("Caption too short - skipping")
+                    return None
             except Exception as e:
-                logger.warning(f"Caption generation failed: {e}")
-                caption = f"Explaining: {topic[:100]}"
+                logger.error(f"Caption generation failed: {e}")
+                return None
 
-            # Generate infographic prompt for Imagen
-            infographic_visual_prompt = f"""Professional tech infographic about "{topic}".
-
-Key concepts to visualize: {', '.join(key_points)}
-
-Style: Clean, modern data visualization diagram
-Color scheme: Professional blue and white with accent colors
-Visual elements: Charts, diagrams, icons, connecting lines
-
-Requirements:
-- Educational and informative
-- High contrast, readable at small sizes
-- Minimalist tech aesthetic
-- 16:9 aspect ratio for Twitter/X
-- No text clutter, visual explanation"""
-
-            # Add URL to caption if available
-            if story_url:
+            # Add URL to caption
+            if story_url and story_url not in caption:
                 if len(caption) + len(story_url) + 4 <= 280:
                     caption = f"{caption}\n\n{story_url}"
                 else:
-                    max_cap_len = 280 - len(story_url) - 7
-                    caption = f"{caption[:max_cap_len]}...\n\n{story_url}"
-                logger.info(f"Added URL to infographic caption: {story_url}")
+                    max_len = 280 - len(story_url) - 7
+                    caption = f"{caption[:max_len]}...\n\n{story_url}"
 
             strategy["content"] = caption
             strategy["image_prompt"] = infographic_visual_prompt
             strategy["key_points"] = key_points
+            strategy["source_url"] = story_url
+            logger.info(f"Infographic strategy ready: {infographic_visual_prompt[:50]}...")
 
         else:
             # Generate Hacker News Style Post with REAL URL

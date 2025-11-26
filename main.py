@@ -95,9 +95,15 @@ def main():
     else:
         logger.info("FORCE_POST enabled, bypassing scheduler check")
 
-    # 3. Get Strategy
+    # 3. Get Strategy (may return None if no quality content available)
     try:
         strategy = brain.get_strategy()
+
+        if strategy is None:
+            logger.info("No quality content available - skipping this post cycle")
+            logger.info("This is normal - we only post when we have good content")
+            sys.exit(0)  # Clean exit, not an error
+
         logger.info(f"Strategy decided: {strategy}")
     except Exception as e:
         logger.error(f"Failed to generate strategy: {e}")

@@ -1,11 +1,13 @@
 """
-Meme Fetcher - Fetches trending memes from free open sources.
+Meme Fetcher - Agentic meme discovery from multiple free sources.
 
-Sources:
-- Reddit (r/ProgrammerHumor, r/memes, r/cryptocurrency, r/technology)
+Sources (all free, no API keys):
+- Reddit (r/ProgrammerHumor, r/memes, etc.)
+- Giphy (trending GIFs)
 - Imgflip (popular meme templates)
 
-All free, no API keys required for basic access.
+Philosophy: Research first, validate with AI, only post quality content.
+If nothing good found, return None - never post junk.
 """
 
 import logging
@@ -15,151 +17,277 @@ import tempfile
 import os
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
+from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
 
 
-class MemeFetcher:
-    """Fetches trending memes from free sources for posting."""
+class MemeSource(ABC):
+    """Abstract base class for meme sources."""
 
-    # Reddit subreddits by category
+    @abstractmethod
+    def fetch_memes(self, category: str, limit: int) -> List[Dict]:
+        """Fetch memes from this source."""
+        pass
+
+    @abstractmethod
+    def get_source_name(self) -> str:
+        """Return the name of this source."""
+        pass
+
+
+class RedditSource(MemeSource):
+    """Fetches memes from Reddit (free, no API key)."""
+
     SUBREDDITS = {
-        'ai': ['ProgrammerHumor', 'artificial', 'MachineLearning', 'singularity'],
-        'crypto': ['CryptoCurrency', 'Bitcoin', 'ethereum', 'CryptoMemes'],
-        'tech': ['ProgrammerHumor', 'technology', 'techhumor', 'softwaregore'],
-        'finance': ['wallstreetbets', 'StockMarket', 'investing'],
-        'general': ['memes', 'dankmemes', 'me_irl']
+        'ai': ['ProgrammerHumor', 'artificial', 'MachineLearning', 'singularity', 'ChatGPT'],
+        'crypto': ['CryptoCurrency', 'Bitcoin', 'ethereum', 'CryptoMemes', 'SatoshiStreetBets'],
+        'tech': ['ProgrammerHumor', 'technology', 'techhumor', 'softwaregore', 'pcmasterrace'],
+        'finance': ['wallstreetbets', 'StockMarket', 'mauerstrassenwetten'],
+        'general': ['memes', 'dankmemes', 'me_irl', 'AdviceAnimals']
     }
 
-    # User agent for Reddit (required)
     HEADERS = {
-        'User-Agent': 'PhantomBot/1.0 (Tech News Bot; Contact: bot@example.com)'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
 
-    def __init__(self):
-        self._cache = {}
-        self._cache_time = None
-        self._cache_duration = timedelta(minutes=30)
+    def get_source_name(self) -> str:
+        return "Reddit"
 
-    def fetch_trending_memes(self, category: str = 'tech', limit: int = 10) -> List[Dict]:
-        """
-        Fetches trending memes from Reddit for a category.
-        Returns list of meme dicts with url, title, score, subreddit.
-        """
-        # Check cache first
-        cache_key = f"{category}_{limit}"
-        if self._is_cache_valid(cache_key):
-            logger.info(f"Using cached memes for {category}")
-            return self._cache[cache_key]
-
+    def fetch_memes(self, category: str, limit: int = 10) -> List[Dict]:
         subreddits = self.SUBREDDITS.get(category, self.SUBREDDITS['general'])
         all_memes = []
 
-        # Fetch from multiple subreddits
-        for subreddit in subreddits[:2]:  # Limit to 2 subreddits to be nice
+        for subreddit in subreddits[:3]:
             try:
-                memes = self._fetch_reddit_memes(subreddit, limit=5)
-                all_memes.extend(memes)
+                url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit={limit}"
+                response = requests.get(url, headers=self.HEADERS, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+
+                for post in data.get('data', {}).get('children', []):
+                    post_data = post.get('data', {})
+
+                    # Skip NSFW, stickied, non-image
+                    if post_data.get('over_18') or post_data.get('stickied'):
+                        continue
+
+                    url = post_data.get('url', '')
+                    if not self._is_image_url(url):
+                        continue
+
+                    meme = {
+                        'title': post_data.get('title', ''),
+                        'url': url,
+                        'score': post_data.get('score', 0),
+                        'source': f"Reddit r/{subreddit}",
+                        'permalink': f"https://reddit.com{post_data.get('permalink', '')}",
+                        'comments': post_data.get('num_comments', 0),
+                        'created': post_data.get('created_utc', 0)
+                    }
+                    all_memes.append(meme)
+
             except Exception as e:
-                logger.warning(f"Failed to fetch from r/{subreddit}: {e}")
+                logger.debug(f"Reddit r/{subreddit} fetch failed: {e}")
                 continue
 
-        # Sort by score and filter
-        all_memes.sort(key=lambda x: x.get('score', 0), reverse=True)
+        return all_memes
 
-        # Filter for image posts only
-        image_memes = [
-            m for m in all_memes
-            if self._is_valid_meme_url(m.get('url', ''))
-        ]
+    def _is_image_url(self, url: str) -> bool:
+        if not url:
+            return False
+        url_lower = url.lower()
+        valid_ext = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+        valid_hosts = ['i.redd.it', 'i.imgur.com', 'preview.redd.it']
+        return any(url_lower.endswith(ext) for ext in valid_ext) or any(host in url_lower for host in valid_hosts)
 
-        result = image_memes[:limit]
 
-        # Cache results
-        self._cache[cache_key] = result
-        self._cache_time = datetime.now()
+class GiphySource(MemeSource):
+    """Fetches trending GIFs from Giphy (free tier)."""
 
-        logger.info(f"Fetched {len(result)} memes for {category}")
-        return result
+    # Giphy public beta key (rate limited but free)
+    PUBLIC_KEY = "dc6zaTOxFJmzC"
 
-    def _fetch_reddit_memes(self, subreddit: str, limit: int = 10) -> List[Dict]:
-        """Fetches hot posts from a subreddit."""
-        url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit={limit}"
+    def get_source_name(self) -> str:
+        return "Giphy"
+
+    def fetch_memes(self, category: str, limit: int = 10) -> List[Dict]:
+        # Map categories to Giphy search terms
+        search_terms = {
+            'ai': 'artificial intelligence robot',
+            'crypto': 'bitcoin cryptocurrency money',
+            'tech': 'computer programming code',
+            'finance': 'stock market money',
+            'general': 'funny reaction'
+        }
+
+        query = search_terms.get(category, 'funny tech')
+        memes = []
 
         try:
-            response = requests.get(url, headers=self.HEADERS, timeout=10)
+            # Try trending first
+            url = f"https://api.giphy.com/v1/gifs/search?api_key={self.PUBLIC_KEY}&q={query}&limit={limit}&rating=g"
+            response = requests.get(url, timeout=10)
             response.raise_for_status()
             data = response.json()
 
-            memes = []
-            for post in data.get('data', {}).get('children', []):
-                post_data = post.get('data', {})
+            for gif in data.get('data', []):
+                images = gif.get('images', {})
+                original = images.get('original', {})
 
-                # Skip non-image posts, NSFW, stickied
-                if post_data.get('over_18') or post_data.get('stickied'):
+                if not original.get('url'):
+                    continue
+
+                # Check size (Twitter limit is 15MB for GIFs)
+                size = int(original.get('size', 0))
+                if size > 10 * 1024 * 1024:  # Skip > 10MB
                     continue
 
                 meme = {
-                    'title': post_data.get('title', ''),
-                    'url': post_data.get('url', ''),
-                    'score': post_data.get('score', 0),
-                    'subreddit': subreddit,
-                    'permalink': f"https://reddit.com{post_data.get('permalink', '')}",
-                    'author': post_data.get('author', ''),
-                    'num_comments': post_data.get('num_comments', 0),
-                    'created_utc': post_data.get('created_utc', 0)
+                    'title': gif.get('title', ''),
+                    'url': original.get('url'),
+                    'score': int(gif.get('trending_datetime', '0') != '0') * 100,  # Trending bonus
+                    'source': 'Giphy',
+                    'permalink': gif.get('url', ''),
+                    'comments': 0,
+                    'created': 0
                 }
                 memes.append(meme)
 
-            return memes
+        except Exception as e:
+            logger.debug(f"Giphy fetch failed: {e}")
+
+        return memes
+
+
+class ImgflipSource(MemeSource):
+    """Fetches popular meme templates from Imgflip (free)."""
+
+    def get_source_name(self) -> str:
+        return "Imgflip"
+
+    def fetch_memes(self, category: str, limit: int = 10) -> List[Dict]:
+        memes = []
+
+        try:
+            url = "https://api.imgflip.com/get_memes"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get('success'):
+                templates = data.get('data', {}).get('memes', [])
+
+                # Filter by category keywords
+                category_keywords = {
+                    'ai': ['ai', 'robot', 'computer', 'brain', 'think'],
+                    'crypto': ['money', 'rich', 'broke', 'trade'],
+                    'tech': ['computer', 'code', 'work', 'office', 'think'],
+                    'finance': ['money', 'rich', 'broke', 'trade', 'invest'],
+                    'general': []  # Accept all
+                }
+
+                keywords = category_keywords.get(category, [])
+
+                for template in templates[:50]:  # Check top 50
+                    name = template.get('name', '').lower()
+
+                    # If no keywords, accept all. Otherwise filter.
+                    if keywords and not any(kw in name for kw in keywords):
+                        continue
+
+                    meme = {
+                        'title': template.get('name', ''),
+                        'url': template.get('url', ''),
+                        'score': template.get('box_count', 0) * 10,  # More boxes = more popular
+                        'source': 'Imgflip',
+                        'permalink': f"https://imgflip.com/meme/{template.get('id', '')}",
+                        'comments': 0,
+                        'created': 0
+                    }
+                    memes.append(meme)
+
+                    if len(memes) >= limit:
+                        break
 
         except Exception as e:
-            logger.error(f"Reddit fetch error for r/{subreddit}: {e}")
+            logger.debug(f"Imgflip fetch failed: {e}")
+
+        return memes
+
+
+class MemeFetcher:
+    """
+    Aggregates memes from multiple sources.
+    Research-first approach - fetches from all sources, ranks by quality.
+    """
+
+    def __init__(self):
+        self.sources: List[MemeSource] = [
+            RedditSource(),
+            GiphySource(),
+            ImgflipSource()
+        ]
+        self._cache = {}
+        self._cache_time = {}
+        self._cache_duration = timedelta(minutes=15)
+
+    def research_memes(self, category: str, topic: str = None) -> List[Dict]:
+        """
+        Research memes across all sources for a category.
+        Returns ranked list of memes from all sources.
+        """
+        cache_key = f"{category}_{topic or 'general'}"
+
+        # Check cache
+        if cache_key in self._cache:
+            cache_age = datetime.now() - self._cache_time.get(cache_key, datetime.min)
+            if cache_age < self._cache_duration:
+                logger.info(f"Using cached memes for {category} ({len(self._cache[cache_key])} memes)")
+                return self._cache[cache_key]
+
+        all_memes = []
+        sources_tried = []
+
+        for source in self.sources:
+            try:
+                memes = source.fetch_memes(category, limit=10)
+                sources_tried.append(source.get_source_name())
+                all_memes.extend(memes)
+                logger.info(f"Fetched {len(memes)} memes from {source.get_source_name()}")
+            except Exception as e:
+                logger.warning(f"Source {source.get_source_name()} failed: {e}")
+
+        if not all_memes:
+            logger.warning(f"No memes found from sources: {sources_tried}")
             return []
 
-    def _is_valid_meme_url(self, url: str) -> bool:
-        """Checks if URL is a valid image/gif for posting."""
-        if not url:
-            return False
+        # Rank by score
+        all_memes.sort(key=lambda x: x.get('score', 0), reverse=True)
 
-        # Valid image extensions
-        valid_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+        # If topic provided, boost relevance
+        if topic:
+            topic_words = set(topic.lower().split())
+            for meme in all_memes:
+                title_words = set(meme.get('title', '').lower().split())
+                overlap = len(topic_words & title_words)
+                meme['relevance'] = overlap
 
-        # Valid image hosts
-        valid_hosts = [
-            'i.redd.it',
-            'i.imgur.com',
-            'imgur.com',
-            'preview.redd.it',
-            'media.giphy.com',
-            'tenor.com'
-        ]
+            # Re-sort with relevance bonus
+            all_memes.sort(key=lambda x: x.get('score', 0) + x.get('relevance', 0) * 50, reverse=True)
 
-        url_lower = url.lower()
+        # Cache results
+        self._cache[cache_key] = all_memes
+        self._cache_time[cache_key] = datetime.now()
 
-        # Check extension
-        has_valid_ext = any(url_lower.endswith(ext) for ext in valid_extensions)
-
-        # Check host
-        has_valid_host = any(host in url_lower for host in valid_hosts)
-
-        return has_valid_ext or has_valid_host
-
-    def _is_cache_valid(self, cache_key: str) -> bool:
-        """Check if cache is still valid."""
-        if cache_key not in self._cache:
-            return False
-        if self._cache_time is None:
-            return False
-        return datetime.now() - self._cache_time < self._cache_duration
+        logger.info(f"Researched {len(all_memes)} memes from {len(sources_tried)} sources for {category}")
+        return all_memes
 
     def download_meme(self, meme_url: str) -> Optional[str]:
-        """
-        Downloads meme image to temp file.
-        Returns path to downloaded file or None on failure.
-        """
+        """Download meme to temp file. Returns path or None."""
         try:
-            response = requests.get(meme_url, headers=self.HEADERS, timeout=15)
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            response = requests.get(meme_url, headers=headers, timeout=15)
             response.raise_for_status()
 
             # Determine extension
@@ -173,262 +301,328 @@ class MemeFetcher:
             else:
                 ext = '.jpg'
 
-            # Save to temp file
             with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
                 f.write(response.content)
                 file_path = f.name
 
             file_size = os.path.getsize(file_path)
-            logger.info(f"Downloaded meme to {file_path} ({file_size} bytes)")
 
-            # Validate file size (Twitter limit is 5MB for images, 15MB for GIFs)
+            # Twitter limits: 5MB images, 15MB GIFs
             max_size = 15 * 1024 * 1024 if ext == '.gif' else 5 * 1024 * 1024
             if file_size > max_size:
                 logger.warning(f"Meme too large ({file_size} bytes), skipping")
                 os.remove(file_path)
                 return None
 
+            logger.info(f"Downloaded meme: {file_path} ({file_size} bytes)")
             return file_path
 
         except Exception as e:
-            logger.error(f"Failed to download meme from {meme_url}: {e}")
+            logger.error(f"Download failed for {meme_url}: {e}")
             return None
 
-    def get_best_meme_for_topic(self, topic: str, category: str = 'tech') -> Optional[Dict]:
+
+class ContentResearcher:
+    """
+    Agentic content researcher - researches trends and decides best content strategy.
+    Uses AI to analyze and validate before committing to any content type.
+    """
+
+    def __init__(self, generate_func, influencer_analyzer=None):
         """
-        Gets the best matching meme for a topic.
-        Returns meme dict with downloaded file path.
-        """
-        memes = self.fetch_trending_memes(category, limit=15)
-
-        if not memes:
-            logger.warning(f"No memes found for category {category}")
-            return None
-
-        # Try to find a meme that matches the topic keywords
-        topic_words = set(topic.lower().split())
-
-        # Score memes by relevance
-        scored_memes = []
-        for meme in memes:
-            title_words = set(meme.get('title', '').lower().split())
-            overlap = len(topic_words & title_words)
-            relevance_score = overlap + (meme.get('score', 0) / 1000)  # Add Reddit score
-            scored_memes.append((relevance_score, meme))
-
-        # Sort by relevance
-        scored_memes.sort(key=lambda x: x[0], reverse=True)
-
-        # Try to download top memes until one succeeds
-        for score, meme in scored_memes[:5]:
-            file_path = self.download_meme(meme['url'])
-            if file_path:
-                meme['local_path'] = file_path
-                meme['relevance_score'] = score
-                logger.info(f"Selected meme: {meme['title'][:50]}... (score: {score:.1f})")
-                return meme
-
-        logger.warning("Could not download any memes")
-        return None
-
-
-class MemeAnalyzer:
-    """AI-powered meme analysis for safety and engagement prediction."""
-
-    def __init__(self, generate_func):
-        """
-        Initialize with a text generation function.
-        generate_func should accept a prompt and return text response.
+        Args:
+            generate_func: Function to generate text (AI model call)
+            influencer_analyzer: Optional InfluencerAnalyzer for Twitter trends
         """
         self.generate = generate_func
+        self.influencer = influencer_analyzer
+        self._research_cache = {}
+        self._cache_time = None
 
-    def analyze_meme(self, meme: Dict, topic: str = None) -> Dict:
+    def research_topic(self, topic: str, context: str, category: str) -> Dict:
         """
-        Analyzes a meme for safety and engagement potential.
-        Returns dict with 'safe', 'engaging', 'reason', 'suggested_caption'.
+        Research a topic and return content recommendations.
+        Returns dict with format, style, and reasoning.
         """
-        title = meme.get('title', '')
-        subreddit = meme.get('subreddit', '')
-        score = meme.get('score', 0)
+        # Get trending context if available
+        trending_context = self._get_trending_context(category)
 
-        prompt = f"""Analyze this meme for posting on a professional tech Twitter account.
+        prompt = f"""You are a content strategist for a tech Twitter account. Analyze this topic and recommend the BEST content format.
 
-MEME INFO:
-- Title: "{title}"
-- Source: Reddit r/{subreddit}
-- Reddit Score: {score}
-- Topic Context: {topic or 'tech news'}
+TOPIC: {topic}
+CATEGORY: {category}
+ARTICLE CONTEXT: {context[:800]}
+{f'CURRENTLY TRENDING: {trending_context}' if trending_context else ''}
 
-EVALUATE:
-1. Is it SAFE for a professional account? (no offensive content, slurs, politics, NSFW)
-2. Will it get ENGAGEMENT? (relatable, funny, timely, tech-relevant)
-3. Does it fit our BRAND? (tech/AI/crypto focused, witty but professional)
+AVAILABLE FORMATS:
+1. TEXT - Simple tweet with article link (Twitter shows preview card)
+2. MEME - Funny/ironic image from internet + witty caption
+3. INFOGRAPHIC - Educational visual explaining concepts
+4. VIDEO - Animated visual (expensive, use sparingly for HIGH impact topics)
 
-IMPORTANT: Be strict about safety. When in doubt, reject.
+DECISION CRITERIA:
+- TEXT: Default for news with good link preview. Low effort, still effective.
+- MEME: Story is ironic, absurd, or relatable frustration. Community will appreciate humor.
+- INFOGRAPHIC: Educational content, comparisons, stats, "how it works" topics.
+- VIDEO: Only for MAJOR announcements or highly visual processes. Very expensive.
 
-Respond in EXACTLY this format:
-SAFE: YES or NO
-ENGAGING: YES or NO
-REASON: <one line explanation>
-CAPTION: <suggested tweet caption if safe, or "N/A" if not safe>
+Analyze and respond in this EXACT format:
+RECOMMENDED_FORMAT: <TEXT|MEME|INFOGRAPHIC|VIDEO>
+CONFIDENCE: <HIGH|MEDIUM|LOW>
+REASONING: <one line explaining why>
+STYLE_NOTES: <specific style guidance if MEME/INFOGRAPHIC/VIDEO, or "N/A" for TEXT>
+IS_TRENDING: <YES|NO - is this topic currently hot?>
 """
 
         try:
             response = self.generate(prompt)
 
-            # Parse response
-            safe = 'SAFE: YES' in response.upper()
-            engaging = 'ENGAGING: YES' in response.upper()
+            result = {
+                'format': 'TEXT',
+                'confidence': 'LOW',
+                'reasoning': '',
+                'style_notes': '',
+                'is_trending': False
+            }
 
+            if 'RECOMMENDED_FORMAT:' in response:
+                fmt = response.split('RECOMMENDED_FORMAT:')[1].split('\n')[0].strip().upper()
+                if fmt in ['TEXT', 'MEME', 'INFOGRAPHIC', 'VIDEO']:
+                    result['format'] = fmt
+
+            if 'CONFIDENCE:' in response:
+                conf = response.split('CONFIDENCE:')[1].split('\n')[0].strip().upper()
+                if conf in ['HIGH', 'MEDIUM', 'LOW']:
+                    result['confidence'] = conf
+
+            if 'REASONING:' in response:
+                result['reasoning'] = response.split('REASONING:')[1].split('\n')[0].strip()
+
+            if 'STYLE_NOTES:' in response:
+                result['style_notes'] = response.split('STYLE_NOTES:')[1].split('\n')[0].strip()
+
+            if 'IS_TRENDING:' in response:
+                result['is_trending'] = 'YES' in response.split('IS_TRENDING:')[1].split('\n')[0].upper()
+
+            logger.info(f"Research result: {result['format']} ({result['confidence']}) - {result['reasoning'][:50]}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Research failed: {e}")
+            return {'format': 'TEXT', 'confidence': 'LOW', 'reasoning': str(e), 'style_notes': '', 'is_trending': False}
+
+    def _get_trending_context(self, category: str) -> str:
+        """Get trending topics from influencer analyzer if available."""
+        if not self.influencer:
+            return ""
+
+        try:
+            insights = self.influencer.get_content_recommendations(category)
+            if insights.get('has_data'):
+                topics = insights.get('trending_topics', [])[:5]
+                return ', '.join(topics)
+        except Exception as e:
+            logger.debug(f"Could not get trending context: {e}")
+
+        return ""
+
+    def validate_meme(self, meme: Dict, topic: str) -> Dict:
+        """
+        AI validates if a meme is safe and engaging for posting.
+        Returns dict with 'approved', 'reason', 'suggested_caption'.
+        """
+        title = meme.get('title', '')
+        source = meme.get('source', '')
+        score = meme.get('score', 0)
+
+        prompt = f"""Evaluate this meme for a professional tech Twitter account.
+
+MEME:
+- Title: "{title}"
+- Source: {source}
+- Popularity Score: {score}
+- Topic Context: {topic}
+
+EVALUATE:
+1. SAFE? (No offensive content, politics, NSFW, slurs, controversial takes)
+2. RELEVANT? (Fits tech/AI/crypto/finance audience)
+3. ENGAGING? (Actually funny/relatable, not cringe)
+
+Be STRICT. When in doubt, reject. We'd rather post nothing than something bad.
+
+Respond EXACTLY:
+APPROVED: YES or NO
+REASON: <one line>
+SUGGESTED_CAPTION: <witty caption if approved, "N/A" if not>
+"""
+
+        try:
+            response = self.generate(prompt)
+
+            approved = 'APPROVED: YES' in response.upper()
             reason = ''
+            caption = ''
+
             if 'REASON:' in response:
                 reason = response.split('REASON:')[1].split('\n')[0].strip()
 
-            caption = ''
-            if 'CAPTION:' in response and safe:
-                caption = response.split('CAPTION:')[1].split('\n')[0].strip()
+            if approved and 'SUGGESTED_CAPTION:' in response:
+                caption = response.split('SUGGESTED_CAPTION:')[1].split('\n')[0].strip()
                 if caption.upper() == 'N/A':
                     caption = ''
 
             return {
-                'safe': safe,
-                'engaging': engaging,
+                'approved': approved,
                 'reason': reason,
-                'suggested_caption': caption,
-                'should_post': safe and engaging
+                'suggested_caption': caption
             }
 
         except Exception as e:
-            logger.error(f"Meme analysis failed: {e}")
+            logger.error(f"Meme validation failed: {e}")
+            return {'approved': False, 'reason': str(e), 'suggested_caption': ''}
+
+    def validate_prompt(self, prompt_type: str, prompt_text: str, topic: str) -> Dict:
+        """
+        AI validates if a generation prompt makes sense before using it.
+        Prevents wasting API calls on bad prompts.
+        """
+        validation_prompt = f"""Evaluate this {prompt_type} generation prompt.
+
+PROMPT TO EVALUATE:
+"{prompt_text}"
+
+TOPIC CONTEXT: {topic}
+
+CHECK:
+1. Is it SPECIFIC enough? (Not vague like "cool tech stuff")
+2. Is it ACHIEVABLE? (AI can actually generate this)
+3. Is it RELEVANT? (Matches the topic)
+4. Is it PROFESSIONAL? (Appropriate for business account)
+
+Respond EXACTLY:
+VALID: YES or NO
+ISSUES: <list any problems, or "None">
+IMPROVED_PROMPT: <better version if needed, or "N/A" if already good>
+"""
+
+        try:
+            response = self.generate(validation_prompt)
+
+            valid = 'VALID: YES' in response.upper()
+            issues = ''
+            improved = ''
+
+            if 'ISSUES:' in response:
+                issues = response.split('ISSUES:')[1].split('\n')[0].strip()
+
+            if 'IMPROVED_PROMPT:' in response:
+                improved = response.split('IMPROVED_PROMPT:')[1].split('\n')[0].strip()
+                if improved.upper() == 'N/A':
+                    improved = prompt_text
+
             return {
-                'safe': False,
-                'engaging': False,
-                'reason': f'Analysis failed: {e}',
-                'suggested_caption': '',
-                'should_post': False
+                'valid': valid,
+                'issues': issues,
+                'improved_prompt': improved if improved else prompt_text
             }
 
+        except Exception as e:
+            logger.error(f"Prompt validation failed: {e}")
+            return {'valid': True, 'issues': '', 'improved_prompt': prompt_text}
 
-class TrendResearcher:
-    """Researches what's trending to inform content strategy."""
-
-    def __init__(self, generate_func, influencer_analyzer=None):
-        self.generate = generate_func
-        self.influencer = influencer_analyzer
-
-    def get_viral_potential(self, topic: str, context: str = '') -> Dict:
+    def generate_video_prompt(self, topic: str, context: str, style_notes: str) -> Optional[str]:
         """
-        Analyzes if a topic has viral potential.
-        Returns strategy recommendations.
+        Generate and validate a video prompt.
+        Returns validated prompt or None if can't create good one.
         """
-        # Get trending data if available
-        trending_context = ""
-        if self.influencer:
-            try:
-                insights = self.influencer.get_content_recommendations('ai')
-                if insights.get('has_data'):
-                    trending_topics = insights.get('trending_topics', [])
-                    trending_context = f"\nCURRENT TRENDING: {', '.join(trending_topics[:10])}"
-            except:
-                pass
-
-        prompt = f"""Analyze the viral potential of this topic for Twitter.
+        prompt = f"""Create a VIDEO generation prompt for this topic.
 
 TOPIC: {topic}
-CONTEXT: {context[:500]}{trending_context}
+CONTEXT: {context[:500]}
+STYLE GUIDANCE: {style_notes}
 
-EVALUATE:
-1. Is this TRENDING or TIMELY? (happening now, people talking about it)
-2. Does it have EMOTIONAL appeal? (surprising, outrageous, inspiring, funny)
-3. Would a VIDEO make it MORE viral? (visual story, process, transformation)
-4. What STYLE would work best?
+VIDEO STYLES THAT WORK:
+- Cyberpunk: Neon cities, holograms, rain, pink/blue lights
+- Data visualization: 3D charts, floating numbers, clean aesthetic
+- Tech montage: Code flowing, circuits lighting up, futuristic UI
 
-VIDEO STYLES that go viral:
-- Cyberpunk/futuristic aesthetic
-- Anime-inspired (action, dramatic)
-- Data visualization / infographic animation
-- "Did you know" explainer
-- Dramatic reveal / transformation
+Create a SPECIFIC, VISUAL prompt (100-200 chars) that Veo can actually generate.
 
-Respond in this format:
-VIRAL_POTENTIAL: HIGH/MEDIUM/LOW
-VIDEO_WORTHY: YES or NO
-RECOMMENDED_STYLE: <style or "text_only">
-HOOK: <one compelling hook line to start the post>
-REASON: <why this would/wouldn't go viral>
-"""
+VIDEO_PROMPT:"""
 
         try:
             response = self.generate(prompt)
 
-            potential = 'LOW'
-            if 'VIRAL_POTENTIAL: HIGH' in response.upper():
-                potential = 'HIGH'
-            elif 'VIRAL_POTENTIAL: MEDIUM' in response.upper():
-                potential = 'MEDIUM'
+            if 'VIDEO_PROMPT:' in response:
+                video_prompt = response.split('VIDEO_PROMPT:')[1].strip()
+            else:
+                video_prompt = response.strip()
 
-            video_worthy = 'VIDEO_WORTHY: YES' in response.upper()
+            # Clean up
+            video_prompt = video_prompt.split('\n')[0].strip().strip('"')
 
-            style = 'text_only'
-            if 'RECOMMENDED_STYLE:' in response:
-                style = response.split('RECOMMENDED_STYLE:')[1].split('\n')[0].strip().lower()
+            if len(video_prompt) < 30:
+                logger.warning(f"Video prompt too short: {video_prompt}")
+                return None
 
-            hook = ''
-            if 'HOOK:' in response:
-                hook = response.split('HOOK:')[1].split('\n')[0].strip()
+            # Validate the prompt
+            validation = self.validate_prompt('video', video_prompt, topic)
+            if not validation['valid']:
+                logger.warning(f"Video prompt invalid: {validation['issues']}")
+                video_prompt = validation['improved_prompt']
 
-            reason = ''
-            if 'REASON:' in response:
-                reason = response.split('REASON:')[1].split('\n')[0].strip()
-
-            return {
-                'viral_potential': potential,
-                'video_worthy': video_worthy,
-                'recommended_style': style,
-                'hook': hook,
-                'reason': reason
-            }
+            return video_prompt
 
         except Exception as e:
-            logger.error(f"Viral analysis failed: {e}")
-            return {
-                'viral_potential': 'LOW',
-                'video_worthy': False,
-                'recommended_style': 'text_only',
-                'hook': '',
-                'reason': str(e)
-            }
+            logger.error(f"Video prompt generation failed: {e}")
+            return None
 
-    def get_video_prompt_for_style(self, topic: str, style: str, context: str = '') -> str:
+    def generate_infographic_prompt(self, topic: str, context: str, key_points: List[str]) -> Optional[str]:
         """
-        Generates a Veo video prompt based on recommended style.
+        Generate and validate an infographic prompt.
+        Returns validated prompt or None.
         """
-        style_prompts = {
-            'cyberpunk': f"""Cyberpunk futuristic scene: Neon-lit cityscape with holographic displays showing "{topic[:30]}".
-Rain-soaked streets, flying vehicles, glowing data streams.
-Dark blues and hot pinks, lens flares, cinematic camera movement.
-High-tech terminals displaying code and charts. Blade Runner aesthetic.""",
+        points_text = '\n'.join(f"- {p}" for p in key_points[:5])
 
-            'anime': f"""Anime-style dramatic sequence about {topic[:30]}.
-Dynamic action poses, speed lines, dramatic lighting.
-Bold colors, expressive characters, energy effects.
-Epic reveal moment with particle effects and dramatic zoom.""",
+        prompt = f"""Create an INFOGRAPHIC image prompt for this topic.
 
-            'data_viz': f"""Animated data visualization about {topic[:30]}.
-3D charts rising from dark surface, glowing data points connecting.
-Numbers and statistics floating in space, transforming and updating.
-Clean modern aesthetic, smooth camera movements, professional look.""",
+TOPIC: {topic}
+KEY POINTS:
+{points_text}
 
-            'explainer': f"""Engaging explainer video about {topic[:30]}.
-Clean white background with bold graphics appearing.
-Step-by-step visual breakdown, icons animating in sequence.
-Modern motion graphics, smooth transitions, clear typography.""",
+INFOGRAPHIC STYLES:
+- Flowchart: Process steps connected by arrows
+- Comparison: Side-by-side boxes showing differences
+- Timeline: Chronological progression
+- Stats: Big numbers with icons
+- Diagram: System architecture or concept map
 
-            'transformation': f"""Dramatic before/after transformation showing {topic[:30]}.
-Split screen morphing, old vs new comparison.
-Satisfying reveal moment, cinematic timing.
-Clean professional aesthetic with dramatic lighting."""
-        }
+Create a SPECIFIC prompt (80-150 chars) for Imagen to generate.
+Focus on CLEAN, PROFESSIONAL, EDUCATIONAL visual.
 
-        # Default to cyberpunk if style not found (it's eye-catching)
-        return style_prompts.get(style, style_prompts['cyberpunk'])
+INFOGRAPHIC_PROMPT:"""
+
+        try:
+            response = self.generate(prompt)
+
+            if 'INFOGRAPHIC_PROMPT:' in response:
+                infographic_prompt = response.split('INFOGRAPHIC_PROMPT:')[1].strip()
+            else:
+                infographic_prompt = response.strip()
+
+            infographic_prompt = infographic_prompt.split('\n')[0].strip().strip('"')
+
+            if len(infographic_prompt) < 30:
+                logger.warning(f"Infographic prompt too short")
+                return None
+
+            # Validate
+            validation = self.validate_prompt('infographic', infographic_prompt, topic)
+            if not validation['valid']:
+                infographic_prompt = validation['improved_prompt']
+
+            return infographic_prompt
+
+        except Exception as e:
+            logger.error(f"Infographic prompt generation failed: {e}")
+            return None
