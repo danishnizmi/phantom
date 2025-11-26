@@ -50,6 +50,15 @@ except ImportError:
     INFLUENCER_AVAILABLE = False
     InfluencerAnalyzer = None
 
+try:
+    from meme_fetcher import MemeFetcher, MemeAnalyzer, TrendResearcher
+    MEME_FETCHER_AVAILABLE = True
+except ImportError:
+    MEME_FETCHER_AVAILABLE = False
+    MemeFetcher = None
+    MemeAnalyzer = None
+    TrendResearcher = None
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -153,6 +162,23 @@ class AgentBrain:
                 logger.info("✓ Influencer analyzer initialized for trend tracking")
             except Exception as e:
                 logger.warning(f"Influencer analyzer not available: {e}")
+
+        # Initialize meme fetcher for real memes from Reddit/Imgflip
+        self.meme_fetcher = None
+        self.meme_analyzer = None
+        self.trend_researcher = None
+        if MEME_FETCHER_AVAILABLE:
+            try:
+                self.meme_fetcher = MemeFetcher()
+                self.meme_analyzer = MemeAnalyzer(self._generate_with_fallback)
+                self.trend_researcher = TrendResearcher(
+                    self._generate_with_fallback,
+                    self.influencer_analyzer
+                )
+                logger.info("✓ Meme fetcher initialized (Reddit, free sources)")
+                logger.info("✓ Trend researcher initialized for viral content")
+            except Exception as e:
+                logger.warning(f"Meme fetcher not available: {e}")
 
     def _discover_available_models(self) -> list:
         """
@@ -1164,82 +1190,80 @@ Answer ONLY "YES" or "NO":"""
         }
 
         if post_type == "video":
-            # Generate Video Prompt and Tweet Text with FULL article context
-            # Determine if this needs an explainer video or a hook video
-            script_prompt = f"""Generate a tweet with video for THIS EXACT NEWS STORY.
+            # VIRAL VIDEO: Use trend research to create eye-catching content
+            logger.info(f"🎬 Creating viral video for: {topic}")
 
-ARTICLE CONTEXT (READ CAREFULLY - USE THIS INFO):
+            # Check viral potential and get recommended style
+            viral_style = 'cyberpunk'  # Default to eye-catching cyberpunk
+            viral_hook = ''
+
+            if self.trend_researcher:
+                try:
+                    viral_analysis = self.trend_researcher.get_viral_potential(topic, story_context)
+                    viral_style = viral_analysis.get('recommended_style', 'cyberpunk')
+                    viral_hook = viral_analysis.get('hook', '')
+                    logger.info(f"Viral analysis: potential={viral_analysis['viral_potential']}, style={viral_style}")
+
+                    # Get style-specific video prompt
+                    if viral_style != 'text_only':
+                        style_prompt = self.trend_researcher.get_video_prompt_for_style(
+                            topic, viral_style, story_context
+                        )
+                        logger.info(f"Using {viral_style} style for viral appeal")
+                except Exception as e:
+                    logger.warning(f"Viral analysis failed: {e}, using default cyberpunk style")
+
+            # Generate video with viral style
+            script_prompt = f"""Generate a tweet with VIRAL VIDEO for this tech news.
+
+ARTICLE CONTEXT:
 {story_context}
 
-ARTICLE TITLE: {topic}
+TOPIC: {topic}
 SOURCE URL: {story_url if story_url else 'No URL'}
 
-CRITICAL WARNING: You MUST write about THIS EXACT article using the context above. DO NOT make up fake products or features!
-
-VIDEO TYPE DECISION:
-- If article involves a process, algorithm, or how something works → EXPLAINER video
-- If article is breaking news, announcement, or debate → HOOK video
+VIRAL STYLE: {viral_style.upper()}
+{f'SUGGESTED HOOK: {viral_hook}' if viral_hook else ''}
 
 You MUST provide BOTH parts in this EXACT format:
-CAPTION: <your complete tweet text here>
-PROMPT: <your detailed visual description here>
+CAPTION: <your tweet text - short, punchy, viral-worthy>
+PROMPT: <detailed video description in {viral_style} style>
 
 CAPTION REQUIREMENTS:
-- Must reference the ACTUAL article content from context above
-- Use SPECIFIC details from the article context (numbers, names, features)
-- Do NOT invent product names, versions, or features beyond what's in the context
-- Must be a COMPLETE sentence ending with punctuation (. ! ?)
-- 100-175 characters total (leaves room for URL)
-- Sound CASUAL and HUMAN, not robotic or formal
-- NO formal questions like "How will this impact..." or "What does this mean for..."
-- NO marketing language ("Unleash", "Revolutionary", etc.)
+- Short, punchy, click-worthy (100-150 chars)
+- Creates curiosity or FOMO
 - NO hashtags, NO emojis
+- Sound human and casual
 
-PROMPT REQUIREMENTS FOR VIDEO (IMPORTANT - BE DETAILED AND SPECIFIC TO THE ARTICLE):
+VIDEO PROMPT - USE THIS STYLE: {viral_style.upper()}
 
-For EXPLAINER videos (processes, how-to, algorithms):
-- Describe a clear visual sequence showing the SPECIFIC process from the article
-- Include diagrams, flowcharts, or code related to the ACTUAL technology mentioned
-- Show before/after states or transformations SPECIFIC to the article
-- Use actual numbers/metrics from the article context
-- Example: "Animated flowchart showing data moving through neural network layers, with nodes lighting up sequentially as computation progresses, ending with output prediction appearing"
+CYBERPUNK style:
+- Neon-lit futuristic city, holographic displays, rain-soaked streets
+- Glowing data streams, circuit patterns, lens flares
+- Dark blues and hot pinks, dramatic lighting
 
-For HOOK videos (news, announcements, debates):
-- Start with attention-grabbing visual related to the ACTUAL company/product in the article
-- Include relevant tech imagery specific to what's described in the context
-- Create visual intrigue based on the REAL story details
-- Use actual logos, products, or visuals mentioned in the context
-- Example: "Zoom into glowing AI chip with circuit patterns, transition to split-screen comparison of old vs new performance graphs showing 2x speedup, end on provocative question mark"
+ANIME style:
+- Dynamic action poses, speed lines, dramatic lighting
+- Bold colors, expressive movement, energy effects
+- Epic reveal with particle effects
 
-PROMPT SHOULD BE:
-- 100-200 characters (detailed and specific to THIS article)
-- Cinematically interesting but FACTUAL to the article
-- Technically relevant using details from the context
-- Actually achievable by a video generator
-- References REAL specs, numbers, or details from the article
+DATA_VIZ style:
+- 3D charts rising from surface, glowing data points
+- Numbers floating in space, smooth animations
+- Clean modern aesthetic, professional look
 
-BAD Examples (NEVER DO THIS):
-X "Unleash creativity with Nano Banana Pro!" (made up product)
-X "Check back later for the video!" (placeholder)
-X "Tech-focused, developer-oriented visuals" (too generic, not specific to article)
-X "Cool AI stuff" (not specific enough, ignores article context)
+EXPLAINER style:
+- Clean white background, bold graphics
+- Step-by-step breakdown, icons animating
+- Modern motion graphics, clear typography
 
-GOOD Examples (USING ARTICLE CONTEXT):
-If article says "GPT-5 reduces hallucinations by 40%":
-CAPTION: "GPT-5 cuts hallucinations by 40%. Finally getting somewhere with reliability."
-PROMPT: "Split screen showing GPT-4 vs GPT-5 accuracy charts, bars rising to show 40% improvement, transition to checkmark appearing over error-prone outputs"
+Generate video prompt that matches the {viral_style.upper()} style for THIS topic.
+Make it visually STUNNING and shareable!
 
-If article says "Rust adoption grows 67% among Fortune 500":
-CAPTION: "Fortune 500 went 67% more Rust this year. Memory safety wins."
-PROMPT: "Animated bar chart racing showing programming language adoption, Rust bar surging 67% upward past other languages, corporate logos appearing on rising bar"
+Example for CYBERPUNK:
+CAPTION: "The future of AI just got real. This changes everything."
+PROMPT: "Cyberpunk cityscape with neon holographic displays showing AI neural networks, rain-soaked streets reflecting pink and blue lights, data streams flowing between buildings, camera flies through holographic code visualization"
 
-BAD (too formal):
-X "How will this impact the future of AI reliability?" (robotic question)
-X "What does increased Rust adoption mean for enterprise?" (textbook tone)
-
-CRITICAL: Write COMPLETE, STANDALONE caption using REAL details from the article context. NO placeholder text!
-
-Now generate for the article above.
 """
 
             try:
@@ -1405,95 +1429,105 @@ Now generate for the article above.
             strategy["image_prompt"] = visual_prompt
 
         elif post_type == "meme":
-            # Generate Meme about current tech affairs
-            logger.info(f"Generating meme for: {topic}")
+            # AGENTIC MEME: Fetch real memes from Reddit, analyze for safety, then post
+            logger.info(f"🔍 Fetching trending meme for: {topic}")
+            category = story.get('category', 'tech')
 
-            meme_prompt = f"""Generate a MEME about this tech news story.
+            fetched_meme = None
+            meme_local_path = None
 
-ARTICLE CONTEXT:
-{story_context}
+            # Try to fetch a real meme from Reddit
+            if self.meme_fetcher and self.meme_analyzer:
+                try:
+                    # Fetch trending memes for this category
+                    meme = self.meme_fetcher.get_best_meme_for_topic(topic, category)
+
+                    if meme:
+                        logger.info(f"Found meme: {meme.get('title', '')[:50]}...")
+
+                        # AI analyzes if safe and engaging
+                        analysis = self.meme_analyzer.analyze_meme(meme, topic)
+                        logger.info(f"Meme analysis: safe={analysis['safe']}, engaging={analysis['engaging']}")
+
+                        if analysis['should_post']:
+                            fetched_meme = meme
+                            meme_local_path = meme.get('local_path')
+                            logger.info(f"✓ Meme approved for posting!")
+
+                            # Use AI suggested caption or generate one
+                            if analysis.get('suggested_caption'):
+                                caption = analysis['suggested_caption']
+                            else:
+                                # Generate caption that references the meme
+                                caption_prompt = f"""Write a short, witty caption for sharing this meme about tech news.
+
+MEME TITLE: {meme.get('title', '')}
+NEWS TOPIC: {topic}
+
+Requirements:
+- 50-150 characters
+- Witty, relatable to tech community
+- Don't explain the meme, just introduce it
+- NO hashtags
+
+Caption:"""
+                                caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
+                        else:
+                            logger.warning(f"Meme rejected: {analysis['reason']}")
+                            # Clean up downloaded file
+                            if meme.get('local_path'):
+                                try:
+                                    import os
+                                    os.remove(meme['local_path'])
+                                except:
+                                    pass
+
+                except Exception as e:
+                    logger.warning(f"Meme fetch failed: {e}")
+
+            # If no fetched meme, fall back to text post (don't generate AI junk)
+            if not fetched_meme:
+                logger.info("No suitable meme found, falling back to text post")
+                post_type = "text"
+                strategy["type"] = "text"
+
+                # Generate a witty text-only post
+                text_prompt = f"""Write a witty, meme-style tweet about this tech news (NO image needed).
 
 TOPIC: {topic}
+CONTEXT: {story_context[:300]}
 
-You MUST provide BOTH parts in this EXACT format:
-CAPTION: <your meme caption text here>
-PROMPT: <detailed meme image description for Imagen>
+Requirements:
+- Short, punchy (100-200 chars)
+- Sarcastic, ironic, or observational humor
+- Relatable to tech community
+- End with the URL
 
-MEME CAPTION REQUIREMENTS:
-- Short, punchy, meme-style text (50-150 chars)
-- Sound CASUAL and RELATABLE to tech community
-- Can be sarcastic, ironic, or observational
-- Reference the ACTUAL story with humor
-- NO formal language, NO marketing speak
-- Global perspective (bot is Australian)
+Tweet:"""
+                caption = self._generate_with_fallback(text_prompt).strip()
 
-MEME IMAGE PROMPT REQUIREMENTS:
-- Describe a REACTION IMAGE or MEME FORMAT
-- Be specific about expression/emotion
-- Meme-worthy situation or comparison
-- Classic meme styles work: "Drake approving/disapproving", "Distracted boyfriend", "This is fine", etc.
-- Or describe reaction: "Person looking shocked", "Side-eye glance", "Facepalm"
-- 80-150 characters
-
-GOOD MEME EXAMPLES:
-Topic: "Another startup claims AGI breakthrough"
-CAPTION: "Another AGI announcement. Sure mate, right after Duke Nukem Forever ships."
-PROMPT: "Side-eye meme format, person giving suspicious skeptical look to camera, doubtful expression"
-
-Topic: "Meta lays off AI team then posts 50 AI job openings"
-CAPTION: "Meta: Fires AI team. Also Meta: Now hiring AI engineers. Make it make sense."
-PROMPT: "Two button meme format, person sweating choosing between two contradictory buttons, corporate confusion"
-
-Topic: "New JavaScript framework promises to end framework fatigue"
-CAPTION: "New JS framework to end framework fatigue. The irony is not lost on us."
-PROMPT: "This is fine meme, person sitting in burning room drinking coffee, resigned acceptance"
-
-Now generate the meme:
-"""
-
-            try:
-                response = self._generate_with_fallback(meme_prompt)
-                logger.info(f"Meme generation response: {response[:100]}...")
-
-                if "CAPTION:" in response and "PROMPT:" in response:
-                    parts = response.split("PROMPT:")
-                    caption_part = parts[0].replace("CAPTION:", "").strip()
-                    meme_image_prompt = parts[1].strip()
-
-                    # Validate caption
-                    if len(caption_part) < 20 or not any(caption_part.endswith(p) for p in ['.', '!', '?']):
-                        logger.warning(f"Meme caption seems incomplete: {caption_part}")
-                        caption_part = f"{caption_part}."
-
-                    max_caption_len = 175 if story_url else 280
-                    caption = caption_part[:max_caption_len]
-
-                    # Validate meme prompt
-                    if len(meme_image_prompt) < 30:
-                        logger.warning(f"Meme prompt too short: {meme_image_prompt}")
-                        raise ValueError(f"Meme prompt must be detailed (30+ chars)")
-
-                    logger.info(f"Meme image prompt: {meme_image_prompt[:100]}...")
-                else:
-                    logger.error("Response missing CAPTION: or PROMPT: markers")
-                    raise ValueError("Invalid format - missing CAPTION or PROMPT")
-
-            except Exception as e:
-                logger.error(f"Failed to generate meme: {e}")
-                raise
-
-            # Add URL to caption if available
-            if story_url:
-                if story_url not in caption:
+                if story_url and story_url not in caption:
                     if len(caption) + len(story_url) + 4 <= 280:
                         caption = f"{caption}\n\n{story_url}"
                     else:
-                        max_cap_len = 280 - len(story_url) - 7
-                        caption = f"{caption[:max_cap_len]}...\n\n{story_url}"
-                    logger.info(f"Added URL to meme caption: {story_url}")
+                        max_len = 280 - len(story_url) - 7
+                        caption = f"{caption[:max_len]}...\n\n{story_url}"
 
-            strategy["content"] = caption
-            strategy["image_prompt"] = meme_image_prompt  # Use same image generation as IMAGE type
+                strategy["content"] = [caption]
+                strategy["source_url"] = story_url
+            else:
+                # We have a fetched meme - set up strategy
+                if story_url and story_url not in caption:
+                    if len(caption) + len(story_url) + 4 <= 280:
+                        caption = f"{caption}\n\n{story_url}"
+                    else:
+                        max_len = 280 - len(story_url) - 7
+                        caption = f"{caption[:max_len]}...\n\n{story_url}"
+
+                strategy["content"] = caption
+                strategy["meme_local_path"] = meme_local_path  # Path to downloaded meme
+                strategy["meme_source"] = fetched_meme.get('permalink', '')  # Reddit source
+                strategy["meme_title"] = fetched_meme.get('title', '')
 
         elif post_type == "infographic":
             # Generate educational infographic

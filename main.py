@@ -222,27 +222,70 @@ def main():
                     except Exception:
                         pass
 
-        elif strategy["type"] in ["image", "meme"]:
+        elif strategy["type"] == "meme":
+            # MEME: Use fetched meme from Reddit (meme_local_path) or fallback to text
+            image_path = strategy.get("meme_local_path")  # Pre-downloaded meme
+            try:
+                if image_path and os.path.exists(image_path):
+                    # We have a fetched meme - upload and post
+                    logger.info(f"Posting fetched meme from: {strategy.get('meme_source', 'Reddit')}")
+                    media = upload_media_v1(api_v1, image_path)
+                    post_tweet_v2(client_v2, text=strategy["content"], media_ids=[media.media_id])
+                    logger.info(f"Meme posted successfully! Source: {strategy.get('meme_title', '')[:50]}")
+                    brain.log_post(strategy, success=True)
+                else:
+                    # No meme image - post as text (brain.py already set content)
+                    logger.info("No meme image, posting as text")
+                    content = strategy["content"]
+                    if isinstance(content, list):
+                        content = content[0]
+                    post_tweet_v2(client_v2, text=content)
+                    logger.info("Posted meme-style text successfully!")
+                    brain.log_post(strategy, success=True)
+
+            except Exception as e:
+                logger.error(f"Meme posting failed: {e}")
+                # Fallback to text
+                try:
+                    content = strategy["content"]
+                    if isinstance(content, list):
+                        content = content[0]
+                    post_tweet_v2(client_v2, text=content)
+                    logger.info("Posted text fallback after meme failure")
+                    brain.log_post(strategy, success=True, error=f"Meme failed, posted text. Error: {e}")
+                except Exception as fallback_error:
+                    logger.error(f"Fallback also failed: {fallback_error}")
+                    brain.log_post(strategy, success=False, error=str(e))
+                    sys.exit(1)
+            finally:
+                # Cleanup downloaded meme
+                if image_path and os.path.exists(image_path):
+                    try:
+                        os.remove(image_path)
+                        logger.info(f"Cleaned up meme file: {image_path}")
+                    except:
+                        pass
+
+        elif strategy["type"] == "image":
+            # IMAGE: AI-generated image with Imagen
             image_path = None
             try:
-                # Both image and meme use generate_image() with image_prompt
-                # (brain.py sets image_prompt for both types)
                 image_prompt = strategy.get("image_prompt")
                 if not image_prompt:
-                    raise ValueError(f"Missing image_prompt for {strategy['type']} post")
+                    raise ValueError("Missing image_prompt for image post")
 
                 image_path = brain.generate_image(image_prompt)
 
                 # Upload Image
                 media = upload_media_v1(api_v1, image_path)
 
-                # Post Tweet with Image/Meme
+                # Post Tweet with Image
                 post_tweet_v2(client_v2, text=strategy["content"], media_ids=[media.media_id])
-                logger.info(f"{strategy['type'].capitalize()} posted successfully!")
+                logger.info("Image posted successfully!")
                 brain.log_post(strategy, success=True)
 
             except Exception as e:
-                logger.error(f"{strategy['type'].capitalize()} generation or upload failed: {e}")
+                logger.error(f"Image generation or upload failed: {e}")
                 logger.info("Falling back to text with URL...")
 
                 # Fallback to text with URL
@@ -250,22 +293,20 @@ def main():
                     caption = strategy['content']
                     source_url = strategy.get('source_url')
 
-                    # If we have a URL, create proper fallback with citation
                     if source_url:
                         fallback_text = f"{caption}\n\n{source_url}"
-                        # Ensure under 280 chars
                         if len(fallback_text) > 280:
-                            max_caption = 280 - len(source_url) - 4  # -4 for \n\n spacing
+                            max_caption = 280 - len(source_url) - 4
                             fallback_text = f"{caption[:max_caption]}...\n\n{source_url}"
                     else:
                         fallback_text = caption
 
                     post_tweet_v2(client_v2, text=fallback_text)
-                    logger.info("Posted text with URL after media failure")
-                    brain.log_post(strategy, success=True, error=f"{strategy['type'].capitalize()} failed but posted text with URL. Error: {e}")
+                    logger.info("Posted text with URL after image failure")
+                    brain.log_post(strategy, success=True, error=f"Image failed but posted text. Error: {e}")
                 except Exception as fallback_error:
                     logger.error(f"Fallback tweet also failed: {fallback_error}")
-                    brain.log_post(strategy, success=False, error=f"{strategy['type'].capitalize()} and Fallback failed. Error: {e}")
+                    brain.log_post(strategy, success=False, error=str(e))
                     sys.exit(1)
             finally:
                 if image_path and os.path.exists(image_path):
