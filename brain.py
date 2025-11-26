@@ -399,42 +399,6 @@ class AgentBrain:
 
         return (True, desired_type, f"Image budget OK ({image_count}/5 today)")
 
-    def _should_use_media_for_story(self, topic: str, context: str, recommended_format: str, confidence: str, is_trending: bool) -> bool:
-        """
-        AI decides if this specific story is worth using media budget.
-        Prevents wasting budget on mediocre content.
-        """
-        # Always use media for HIGH confidence + trending
-        if confidence == 'HIGH' and is_trending:
-            logger.info("✓ Story is HIGH confidence + trending - using media")
-            return True
-
-        # For MEDIUM/LOW confidence, ask AI if worth it
-        prompt = f"""Should we use our LIMITED media budget (images/videos cost money) for this story?
-
-STORY: {topic}
-AI RECOMMENDED: {recommended_format}
-CONFIDENCE: {confidence}
-IS TRENDING: {'Yes' if is_trending else 'No'}
-
-We can only generate 5 images/memes and 1 video per day. Should we use budget on THIS story, or save it for something better?
-
-Consider:
-- Is this story IMPORTANT enough for visual content?
-- Will a TEXT post with link preview work just as well?
-- Is this story likely to get engagement even without media?
-
-Answer ONLY: USE_MEDIA or SAVE_BUDGET"""
-
-        try:
-            response = self._generate_with_fallback(prompt).strip().upper()
-            use_media = 'USE_MEDIA' in response
-            logger.info(f"AI budget decision: {'USE_MEDIA' if use_media else 'SAVE_BUDGET'} for {topic[:40]}...")
-            return use_media
-        except Exception as e:
-            logger.warning(f"Budget decision failed: {e}, defaulting to save")
-            return False
-
     def should_post_now(self) -> tuple:
         """
         Uses scheduler to determine if we should post now.
@@ -1397,7 +1361,7 @@ Now generate for the article above.
             meme_local_path = None
             caption = None
 
-            for meme in memes[:10]:  # Check top 10 candidates
+            for meme in memes[:3]:  # Check top 3 candidates only (cost efficient - already sorted by score)
                 logger.info(f"Evaluating meme: {meme.get('title', '')[:40]}... from {meme.get('source', '')}")
 
                 # AI validates safety and engagement
