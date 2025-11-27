@@ -1,51 +1,18 @@
-# Phantom Tech Influencer - Terraform Variables Example
-# Copy this file to terraform.tfvars and fill in your values
+# Phantom Tech Influencer - Terraform Configuration
 #
-# cp terraform.tfvars.example terraform.tfvars
-# Then edit terraform.tfvars with your actual values
+# Quick Setup (recommended):
+#   ./setup.sh YOUR_PROJECT_ID
+#
+# Manual Setup:
+#   cp terraform.tfvars.example terraform.tfvars
+#   Edit terraform.tfvars with your project ID
+#   terraform init && terraform apply
 
 # Required: Your GCP Project ID
 project_id = "your-gcp-project-id"
 
-# GCP Region (us-central1 recommended for Vertex AI availability)
-region = "us-central1"
-
-# Timezone for scheduling (AWST = Australia/Perth, UTC+8)
-timezone = "Australia/Perth"
-
-# Enable budget mode to disable expensive video generation
-budget_mode = false
-
-# Container image name
-image_name = "phantom-influencer"
-
-# Cloud Run Job name
-job_name = "phantom-influencer-job"
-
-# Leave empty to create a new service account, or specify existing
-service_account_email = ""
-
-# Scheduler triggers (cron expressions in AWST timezone)
-# Default: 7 triggers spread throughout the day
-scheduler_triggers = [
-  "30 7 * * *",   # 7:30 AM AWST - Morning coffee
-  "15 10 * * *",  # 10:15 AM AWST - Late morning
-  "45 12 * * *",  # 12:45 PM AWST - Lunch break
-  "30 15 * * *",  # 3:30 PM AWST - Afternoon
-  "0 18 * * *",   # 6:00 PM AWST - Early evening
-  "30 20 * * *",  # 8:30 PM AWST - Peak evening
-  "15 22 * * *",  # 10:15 PM AWST - Night
-]
-
-# Resource limits for Cloud Run Job
-cpu_limit      = "1"
-memory_limit   = "1Gi"
-timeout_seconds = 900  # 15 minutes
-max_retries    = 1
-
-# Labels for all resources
-labels = {
-  app         = "phantom-influencer"
-  environment = "production"
-  managed-by  = "terraform"
-}
+# Optional: Override defaults
+# region             = "us-central1"
+# firestore_location = "nam5"
+# timezone           = "Australia/Perth"
+# budget_mode        = false

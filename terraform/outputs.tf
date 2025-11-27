@@ -10,48 +10,58 @@ output "region" {
   value       = var.region
 }
 
-output "service_account_email" {
-  description = "Service account email used by the Cloud Run Job"
-  value       = local.service_account_email
-}
-
-output "artifact_registry_repository" {
-  description = "Artifact Registry repository URL"
-  value       = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.phantom_repo.repository_id}"
-}
-
-output "container_image_url" {
-  description = "Full container image URL"
-  value       = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.phantom_repo.repository_id}/${var.image_name}:latest"
-}
-
-output "cloud_run_job_name" {
-  description = "Cloud Run Job name"
-  value       = google_cloud_run_v2_job.phantom_job.name
-}
-
-output "cloud_run_job_uri" {
-  description = "Cloud Run Job URI"
-  value       = "https://console.cloud.google.com/run/jobs/details/${var.region}/${google_cloud_run_v2_job.phantom_job.name}?project=${var.project_id}"
-}
-
-output "scheduler_job_names" {
-  description = "Cloud Scheduler job names"
-  value       = [for job in google_cloud_scheduler_job.phantom_triggers : job.name]
-}
-
-output "scheduler_schedules" {
-  description = "Cloud Scheduler cron expressions (AWST)"
-  value       = var.scheduler_triggers
-}
-
 output "timezone" {
   description = "Configured timezone"
   value       = var.timezone
 }
 
+output "service_account_email" {
+  description = "Service account email"
+  value       = google_service_account.phantom_sa.email
+}
+
+output "artifact_registry_url" {
+  description = "Artifact Registry repository URL"
+  value       = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.phantom_repo.repository_id}"
+}
+
+output "container_image" {
+  description = "Full container image URL"
+  value       = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.phantom_repo.repository_id}/${var.image_name}:latest"
+}
+
+output "job_name" {
+  description = "Cloud Run Job name"
+  value       = google_cloud_run_v2_job.phantom_job.name
+}
+
+output "scheduler_count" {
+  description = "Number of scheduler triggers created"
+  value       = length(google_cloud_scheduler_job.phantom_triggers)
+}
+
+output "build_command" {
+  description = "Command to build and push container"
+  value       = "gcloud builds submit --tag ${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.phantom_repo.repository_id}/${var.image_name} .."
+}
+
+output "execute_command" {
+  description = "Command to manually run the job"
+  value       = "gcloud run jobs execute ${var.job_name} --region ${var.region}"
+}
+
+output "force_post_command" {
+  description = "Command to force a post (bypass scheduler)"
+  value       = "gcloud run jobs execute ${var.job_name} --region ${var.region} --update-env-vars FORCE_POST=true"
+}
+
+output "logs_command" {
+  description = "Command to view logs"
+  value       = "gcloud logging read 'resource.type=cloud_run_job AND resource.labels.job_name=${var.job_name}' --limit=50"
+}
+
 output "secrets_to_configure" {
-  description = "Secrets that need to be configured manually"
+  description = "Secrets that need values added"
   value = [
     "TWITTER_CONSUMER_KEY",
     "TWITTER_CONSUMER_SECRET",
@@ -59,32 +69,4 @@ output "secrets_to_configure" {
     "TWITTER_ACCESS_TOKEN_SECRET",
     "TWITTER_BEARER_TOKEN (optional)",
   ]
-}
-
-output "next_steps" {
-  description = "Instructions for completing setup"
-  value       = <<-EOT
-
-    ╔══════════════════════════════════════════════════════════════════╗
-    ║                    TERRAFORM APPLY COMPLETE                       ║
-    ╠══════════════════════════════════════════════════════════════════╣
-    ║  Next Steps:                                                      ║
-    ║                                                                   ║
-    ║  1. Configure Twitter API secrets in Secret Manager:              ║
-    ║     gcloud secrets versions add TWITTER_CONSUMER_KEY \            ║
-    ║       --data-file=/path/to/key.txt                                ║
-    ║                                                                   ║
-    ║  2. Build and push the container image:                           ║
-    ║     cd /home/user/phantom                                         ║
-    ║     ./deploy.sh                                                   ║
-    ║                                                                   ║
-    ║  3. Test the job manually:                                        ║
-    ║     gcloud run jobs execute ${google_cloud_run_v2_job.phantom_job.name} \                           ║
-    ║       --region=${var.region}                                      ║
-    ║                                                                   ║
-    ║  4. Monitor logs:                                                 ║
-    ║     gcloud logging read "resource.type=cloud_run_job" --limit=50  ║
-    ╚══════════════════════════════════════════════════════════════════╝
-
-  EOT
 }

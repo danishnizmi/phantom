@@ -1,5 +1,10 @@
 # Phantom Tech Influencer - Terraform Configuration
 # Infrastructure as Code for GCP deployment
+#
+# Usage:
+#   export TF_VAR_project_id="your-project-id"
+#   terraform init
+#   terraform apply
 
 terraform {
   required_version = ">= 1.0.0"
@@ -9,17 +14,7 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 5.0"
     }
-    google-beta = {
-      source  = "hashicorp/google-beta"
-      version = "~> 5.0"
-    }
   }
-
-  # Uncomment and configure for remote state (recommended for production)
-  # backend "gcs" {
-  #   bucket = "your-terraform-state-bucket"
-  #   prefix = "phantom-influencer"
-  # }
 }
 
 provider "google" {
@@ -27,13 +22,8 @@ provider "google" {
   region  = var.region
 }
 
-provider "google-beta" {
-  project = var.project_id
-  region  = var.region
-}
-
 # ============================================================================
-# Enable Required APIs
+# Enable Required APIs (must be first)
 # ============================================================================
 
 resource "google_project_service" "required_apis" {
@@ -45,10 +35,17 @@ resource "google_project_service" "required_apis" {
     "artifactregistry.googleapis.com",
     "aiplatform.googleapis.com",
     "cloudbuild.googleapis.com",
+    "iam.googleapis.com",
   ])
 
+  project            = var.project_id
   service            = each.key
   disable_on_destroy = false
+
+  timeouts {
+    create = "10m"
+    update = "10m"
+  }
 }
 
 # ============================================================================
@@ -56,14 +53,12 @@ resource "google_project_service" "required_apis" {
 # ============================================================================
 
 resource "google_service_account" "phantom_sa" {
-  count        = var.service_account_email == "" ? 1 : 0
   account_id   = "phantom-influencer-sa"
   display_name = "Phantom Influencer Service Account"
   description  = "Service account for the Phantom Tech Influencer Cloud Run Job"
-}
+  project      = var.project_id
 
-locals {
-  service_account_email = var.service_account_email != "" ? var.service_account_email : google_service_account.phantom_sa[0].email
+  depends_on = [google_project_service.required_apis["iam.googleapis.com"]]
 }
 
 # IAM roles for the service account
@@ -74,11 +69,14 @@ resource "google_project_iam_member" "phantom_sa_roles" {
     "roles/aiplatform.user",
     "roles/storage.objectViewer",
     "roles/logging.logWriter",
+    "roles/run.invoker",
   ])
 
   project = var.project_id
   role    = each.key
-  member  = "serviceAccount:${local.service_account_email}"
+  member  = "serviceAccount:${google_service_account.phantom_sa.email}"
+
+  depends_on = [google_service_account.phantom_sa]
 }
 
 # ============================================================================
@@ -90,7 +88,7 @@ resource "google_artifact_registry_repository" "phantom_repo" {
   repository_id = "phantom-influencer"
   description   = "Docker repository for Phantom Influencer"
   format        = "DOCKER"
-  labels        = var.labels
+  project       = var.project_id
 
   depends_on = [google_project_service.required_apis["artifactregistry.googleapis.com"]]
 }
@@ -99,21 +97,83 @@ resource "google_artifact_registry_repository" "phantom_repo" {
 # Firestore Database
 # ============================================================================
 
+# Note: Firestore location must be a valid multi-region or single region
+# us-central1 maps to nam5 (US multi-region) for Firestore
 resource "google_firestore_database" "phantom_db" {
-  project     = var.project_id
-  name        = "(default)"
-  location_id = var.region
-  type        = "FIRESTORE_NATIVE"
-
-  # Prevent accidental deletion
-  deletion_policy = "DELETE"
+  project                     = var.project_id
+  name                        = "(default)"
+  location_id                 = var.firestore_location
+  type                        = "FIRESTORE_NATIVE"
+  concurrency_mode            = "OPTIMISTIC"
+  app_engine_integration_mode = "DISABLED"
 
   depends_on = [google_project_service.required_apis["firestore.googleapis.com"]]
 
   lifecycle {
     # Firestore database can only be created once per project
-    ignore_changes = [name, location_id, type]
+    ignore_changes  = all
+    prevent_destroy = false
   }
+}
+
+# ============================================================================
+# Secret Manager Secrets (structure only - values set manually)
+# ============================================================================
+
+resource "google_secret_manager_secret" "twitter_secrets" {
+  for_each = toset([
+    "TWITTER_CONSUMER_KEY",
+    "TWITTER_CONSUMER_SECRET",
+    "TWITTER_ACCESS_TOKEN",
+    "TWITTER_ACCESS_TOKEN_SECRET",
+  ])
+
+  project   = var.project_id
+  secret_id = each.key
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required_apis["secretmanager.googleapis.com"]]
+}
+
+# Optional: Bearer token for advanced features
+resource "google_secret_manager_secret" "twitter_bearer" {
+  project   = var.project_id
+  secret_id = "TWITTER_BEARER_TOKEN"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required_apis["secretmanager.googleapis.com"]]
+
+  lifecycle {
+    # This secret is optional
+    ignore_changes = all
+  }
+}
+
+# Grant service account access to secrets
+resource "google_secret_manager_secret_iam_member" "secret_access" {
+  for_each = google_secret_manager_secret.twitter_secrets
+
+  project   = var.project_id
+  secret_id = each.value.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.phantom_sa.email}"
+
+  depends_on = [google_service_account.phantom_sa]
+}
+
+resource "google_secret_manager_secret_iam_member" "bearer_access" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.twitter_bearer.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.phantom_sa.email}"
+
+  depends_on = [google_service_account.phantom_sa]
 }
 
 # ============================================================================
@@ -123,11 +183,11 @@ resource "google_firestore_database" "phantom_db" {
 resource "google_cloud_run_v2_job" "phantom_job" {
   name     = var.job_name
   location = var.region
-  labels   = var.labels
+  project  = var.project_id
 
   template {
     template {
-      service_account = local.service_account_email
+      service_account = google_service_account.phantom_sa.email
       timeout         = "${var.timeout_seconds}s"
       max_retries     = var.max_retries
 
@@ -173,10 +233,11 @@ resource "google_cloud_run_v2_job" "phantom_job" {
     google_project_service.required_apis["run.googleapis.com"],
     google_artifact_registry_repository.phantom_repo,
     google_project_iam_member.phantom_sa_roles,
+    google_firestore_database.phantom_db,
   ]
 
   lifecycle {
-    # Don't recreate the job if only the image tag changes
+    # Don't fail if image doesn't exist yet (will be built after)
     ignore_changes = [
       template[0].template[0].containers[0].image,
     ]
@@ -194,13 +255,15 @@ resource "google_cloud_scheduler_job" "phantom_triggers" {
   description = "Trigger ${count.index + 1} for Phantom Influencer (AWST)"
   schedule    = var.scheduler_triggers[count.index]
   time_zone   = var.timezone
+  project     = var.project_id
+  region      = var.region
 
   http_target {
     http_method = "POST"
     uri         = "https://${var.region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${var.project_id}/jobs/${var.job_name}:run"
 
     oauth_token {
-      service_account_email = local.service_account_email
+      service_account_email = google_service_account.phantom_sa.email
       scope                 = "https://www.googleapis.com/auth/cloud-platform"
     }
   }
@@ -215,36 +278,4 @@ resource "google_cloud_scheduler_job" "phantom_triggers" {
     google_project_service.required_apis["cloudscheduler.googleapis.com"],
     google_cloud_run_v2_job.phantom_job,
   ]
-}
-
-# ============================================================================
-# Secret Manager Secrets (structure only - values set manually)
-# ============================================================================
-
-resource "google_secret_manager_secret" "twitter_secrets" {
-  for_each = toset([
-    "TWITTER_CONSUMER_KEY",
-    "TWITTER_CONSUMER_SECRET",
-    "TWITTER_ACCESS_TOKEN",
-    "TWITTER_ACCESS_TOKEN_SECRET",
-    "TWITTER_BEARER_TOKEN",
-  ])
-
-  secret_id = each.key
-  labels    = var.labels
-
-  replication {
-    auto {}
-  }
-
-  depends_on = [google_project_service.required_apis["secretmanager.googleapis.com"]]
-}
-
-# Grant service account access to secrets
-resource "google_secret_manager_secret_iam_member" "secret_access" {
-  for_each = google_secret_manager_secret.twitter_secrets
-
-  secret_id = each.value.id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${local.service_account_email}"
 }
