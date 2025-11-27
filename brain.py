@@ -766,12 +766,12 @@ PICK BASED ON:
 - Trending or controversial = good
 - Skip boring corporate fluff
 
-RESPOND EXACTLY:
+RESPOND EXACTLY (no extra words):
 PICK: <number 1-{len(stories)}>
-POST: <YES or NO>
-REASON: <why this story, one line>
-STYLE: <tone suggestion for caption>
-FORMAT_HINT: <VIDEO/MEME/TEXT based on topic + budget>"""
+POST: YES or NO
+REASON: <one line>
+STYLE: <tone for caption>
+FORMAT_HINT: VIDEO or MEME or TEXT (just one word, nothing else)"""
 
         try:
             response = self._generate_with_fallback(prompt).strip()
@@ -1167,7 +1167,14 @@ Does it relate to actual topic "{topic}"? Are all claims real?
             research_result = {'format': 'TEXT', 'style_notes': '', 'reasoning': 'Budget exhausted'}
         else:
             # USE AI's format hint from combined call (saves another API call!)
-            format_hint = ai_eval.get('format_hint', 'TEXT').upper()
+            raw_hint = ai_eval.get('format_hint', 'TEXT').upper()
+            # Extract just the format type (AI sometimes adds descriptions like "IMAGE (screenshot...)")
+            format_hint = raw_hint.split()[0] if raw_hint else 'TEXT'
+            # Normalize to valid types only
+            valid_formats = {'VIDEO', 'MEME', 'INFOGRAPHIC', 'TEXT'}
+            if format_hint not in valid_formats:
+                # IMAGE → MEME (we fetch images via meme sources)
+                format_hint = 'MEME' if 'IMAGE' in raw_hint else 'TEXT'
 
             # Respect budget limits
             if format_hint == 'VIDEO' and video_count >= 1:
