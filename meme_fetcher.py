@@ -508,51 +508,76 @@ SUGGESTED_CAPTION: <caption or N/A>
         Generate a creative video prompt. AI decides the best visual style dynamically.
         Returns validated prompt or None if can't create good one.
         """
-        prompt = f"""You're creating an AI-generated video for social media. Think: what visual style would make this topic GO VIRAL?
+        # Extract key concepts from topic for better prompts
+        topic_lower = topic.lower()
+
+        # Determine visual theme based on topic keywords
+        if any(kw in topic_lower for kw in ['bitcoin', 'crypto', 'blockchain', 'token', 'defi']):
+            theme_hint = "cryptocurrency, digital gold, blockchain networks, neon green data streams"
+        elif any(kw in topic_lower for kw in ['ai', 'artificial', 'gemini', 'gpt', 'model', 'neural']):
+            theme_hint = "artificial intelligence, neural networks, glowing circuits, futuristic technology"
+        elif any(kw in topic_lower for kw in ['stock', 'market', 'invest', 'fund', 'billion']):
+            theme_hint = "financial markets, stock tickers, trading floors, money flow visualization"
+        elif any(kw in topic_lower for kw in ['apple', 'google', 'meta', 'microsoft', 'amazon']):
+            theme_hint = "tech giant headquarters, sleek product design, corporate innovation"
+        else:
+            theme_hint = "technology, innovation, digital transformation, futuristic visualization"
+
+        prompt = f"""Create a VIDEO PROMPT for an AI video generator (like Veo). Output ONLY the prompt text, nothing else.
 
 TOPIC: {topic}
-CONTEXT: {context[:400]}
-{f'DIRECTION: {style_notes}' if style_notes else ''}
+THEME: {theme_hint}
+{f'STYLE DIRECTION: {style_notes}' if style_notes else ''}
 
-YOUR JOB:
-1. Analyze the topic - what visual style fits best?
-2. Think about current aesthetic trends (anime, cyberpunk, retro, minimalist, dramatic, etc.)
-3. Create a SPECIFIC, CINEMATIC prompt that Veo/AI video can generate
+Write a cinematic video description (100-150 chars) that includes:
+- A specific visual scene (not abstract concepts)
+- Lighting and color palette
+- Camera movement or visual flow
+- Modern, striking aesthetic
 
-REQUIREMENTS:
-- 100-200 characters
-- Describe a SPECIFIC scene (not vague concepts)
-- Include: lighting, colors, movement, mood
-- Make it visually STRIKING - boring = no engagement
+EXAMPLE OUTPUTS:
+- "Glowing blockchain network expanding across dark space, neon green data packets flowing between nodes, cinematic zoom out"
+- "Futuristic AI chip pulsing with blue light, neural pathways branching outward, dramatic lens flare, 4K quality"
+- "Stock market holographic display, green numbers rising, trader silhouette watching, cyberpunk city background"
 
-If the topic has no good visual angle, respond "CANNOT_GENERATE".
-
-VIDEO_PROMPT:"""
+YOUR VIDEO PROMPT (just the description, no labels):"""
 
         try:
             response = self.generate(prompt)
 
-            if 'CANNOT_GENERATE' in response.upper():
-                logger.warning("AI could not generate valid video prompt")
-                return None
+            # Clean up response - remove any labels, quotes, markdown
+            video_prompt = response.strip()
 
-            if 'VIDEO_PROMPT:' in response:
-                video_prompt = response.split('VIDEO_PROMPT:')[1].strip()
-            else:
-                video_prompt = response.strip()
+            # Remove common prefixes the AI might add
+            remove_prefixes = ['VIDEO_PROMPT:', 'VIDEO PROMPT:', 'PROMPT:', 'Here is', 'Here\'s', '**', '*']
+            for prefix in remove_prefixes:
+                if video_prompt.upper().startswith(prefix.upper()):
+                    video_prompt = video_prompt[len(prefix):].strip()
 
-            # Clean up
-            video_prompt = video_prompt.split('\n')[0].strip().strip('"')
+            # Remove markdown formatting
+            video_prompt = video_prompt.replace('**', '').replace('*', '').strip()
 
+            # Get first line only, remove quotes
+            video_prompt = video_prompt.split('\n')[0].strip().strip('"').strip("'")
+
+            # Final validation
             if len(video_prompt) < 30:
-                logger.warning(f"Video prompt too short: {video_prompt}")
-                return None
+                logger.warning(f"Video prompt too short ({len(video_prompt)} chars): {video_prompt}")
+                # Generate a fallback based on theme
+                video_prompt = f"Cinematic visualization of {theme_hint}, dramatic lighting, futuristic aesthetic, 4K quality"
+                logger.info(f"Using fallback video prompt: {video_prompt[:50]}...")
 
+            if 'CANNOT' in video_prompt.upper() or len(video_prompt) < 30:
+                logger.warning("AI could not generate valid video prompt, using default")
+                video_prompt = f"Cinematic visualization of {theme_hint}, neon lights, data streams, dramatic camera movement"
+
+            logger.info(f"Generated video prompt: {video_prompt[:80]}...")
             return video_prompt
 
         except Exception as e:
             logger.error(f"Video prompt generation failed: {e}")
-            return None
+            # Return a reasonable default instead of None
+            return f"Futuristic tech visualization, {theme_hint}, cinematic lighting, dramatic atmosphere"
 
     def generate_infographic_prompt(self, topic: str, context: str, key_points: List[str]) -> Optional[str]:
         """

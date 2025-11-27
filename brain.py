@@ -1374,34 +1374,25 @@ Does it relate to actual topic "{topic}"? Are all claims real?
             style_notes = research_result.get('style_notes', '')
             video_prompt = None
 
-            # Use ContentResearcher to generate and validate video prompt
+            # Use ContentResearcher to generate video prompt (always returns a valid prompt now)
             if self.content_researcher:
                 video_prompt = self.content_researcher.generate_video_prompt(
                     topic=topic,
                     context=story_context,
                     style_notes=style_notes
                 )
-
-                if not video_prompt:
-                    logger.warning("Could not generate valid video prompt - falling back to meme/text")
-                    # Fallback to meme if budget allows, otherwise text
-                    image_count = usage.get('image', 0) + usage.get('infographic', 0) + usage.get('meme', 0)
-                    if image_count < 5:
-                        post_type = "meme"
-                        strategy["type"] = "meme"
-                        logger.info("Falling back to meme format")
-                    else:
-                        post_type = "text"
-                        strategy["type"] = "text"
-                        logger.info("Falling back to text format")
-                else:
-                    logger.info(f"Generated video prompt: {video_prompt[:80]}...")
+                logger.info(f"Video prompt ready: {video_prompt[:80]}...")
             else:
-                # No researcher - generate simple prompt
-                video_prompt = f"Futuristic tech visualization about {topic[:50]}, neon lights, data streams, cinematic"
+                # No researcher - generate topic-based prompt
+                topic_lower = topic.lower()
+                if any(kw in topic_lower for kw in ['bitcoin', 'crypto', 'blockchain', 'token']):
+                    video_prompt = f"Glowing blockchain network, neon green data streams, cryptocurrency visualization, cinematic, 4K"
+                elif any(kw in topic_lower for kw in ['ai', 'artificial', 'gemini', 'gpt']):
+                    video_prompt = f"Futuristic AI neural network, glowing circuits, data processing visualization, cinematic lighting"
+                else:
+                    video_prompt = f"Futuristic tech visualization about {topic[:40]}, neon lights, data streams, cinematic 4K"
 
-        # Process video if we still have a valid prompt
-        if post_type == "video" and video_prompt:
+        if post_type == "video":
 
             # Generate caption - dry, cynical style
             caption_prompt = f"""{BIG_BOSS_PERSONA}
