@@ -6,19 +6,33 @@ import pytz
 
 logger = logging.getLogger(__name__)
 
+# Import Config for timezone setting
+try:
+    from config import Config
+    DEFAULT_TIMEZONE = Config.TIMEZONE
+except ImportError:
+    DEFAULT_TIMEZONE = "Australia/Perth"  # AWST (UTC+8)
+
+
 class HumanScheduler:
     """
     Simulates human-like posting behavior with randomized scheduling.
     Considers time zones, posting patterns, and natural breaks.
     """
 
-    def __init__(self, timezone: str = "Australia/Sydney"):
+    def __init__(self, timezone: str = None):
         """
         Initialize scheduler with target timezone.
-        Default to Sydney since the bot has Australian personality.
+        Default to Perth (AWST) for Australian Western Standard Time.
+
+        Args:
+            timezone: Timezone string (e.g., "Australia/Perth"). Uses Config.TIMEZONE if not specified.
         """
-        self.timezone = pytz.timezone(timezone)
+        tz_name = timezone or DEFAULT_TIMEZONE
+        self.timezone = pytz.timezone(tz_name)
+        self.timezone_name = tz_name
         self.utc = pytz.UTC
+        logger.info(f"Scheduler initialized with timezone: {tz_name}")
 
         # Define posting windows (local time)
         # Mimics when a human would naturally post
@@ -235,8 +249,20 @@ def get_scheduler_config() -> Dict:
     scheduler = HumanScheduler()
 
     return {
-        'timezone': 'Australia/Sydney',
+        'timezone': scheduler.timezone_name,
         'cron_expressions': scheduler.get_cron_expressions(),
         'daily_target': scheduler.get_posts_per_day_target(),
         'windows': scheduler.posting_windows
     }
+
+
+def should_post_lightweight() -> Tuple[bool, str]:
+    """
+    Lightweight scheduler check - can be called before initializing heavy Brain.
+    This is a standalone function for cold start optimization.
+
+    Returns:
+        Tuple[bool, str]: (should_post, reason)
+    """
+    scheduler = HumanScheduler()
+    return scheduler.should_post_now()

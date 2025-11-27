@@ -4,13 +4,15 @@ import logging
 import tweepy
 from tenacity import retry, stop_after_attempt, wait_exponential
 from config import Config, get_secret
-from brain import AgentBrain
-from veo_client import VeoClient
+
+# Lazy imports for cold start optimization - only import heavy modules when needed
+# from brain import AgentBrain  # Moved to after scheduler check
+# from veo_client import VeoClient  # Imported when needed
 
 # Check for scheduling mode
 FORCE_POST = os.getenv("FORCE_POST", "false").lower() == "true"
 
-# Configure logging
+# Configure logging - will be enhanced with structured logging below
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -18,13 +20,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Try to enable structured logging for GCP Cloud Logging
+try:
+    import google.cloud.logging
+    from google.cloud.logging.handlers import StructuredLogHandler
+
+    # Setup structured logging for GCP
+    client = google.cloud.logging.Client()
+    client.setup_logging()
+    logger.info("Structured logging enabled for GCP Cloud Logging")
+except ImportError:
+    logger.debug("google-cloud-logging not available, using standard logging")
+except Exception as e:
+    logger.warning(f"Could not setup GCP structured logging: {e}")
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=4, max=60))
 def post_tweet_v2(client, text, **kwargs):
     return client.create_tweet(text=text, **kwargs)
 
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=4, max=60))
 def upload_media_v1(api, filename, **kwargs):
     return api.media_upload(filename, **kwargs)
+
 
 def get_twitter_api():
     """Authenticates with X (Twitter) API."""
@@ -34,7 +53,7 @@ def get_twitter_api():
         "TWITTER_ACCESS_TOKEN",
         "TWITTER_ACCESS_TOKEN_SECRET"
     ]
-    
+
     secrets = {}
     for secret_id in required_secrets:
         val = get_secret(secret_id)
@@ -48,7 +67,7 @@ def get_twitter_api():
         secrets["TWITTER_ACCESS_TOKEN"],
         secrets["TWITTER_ACCESS_TOKEN_SECRET"]
     )
-    
+
     # Create clients
     api_v1 = tweepy.API(auth)
     client_v2 = tweepy.Client(
@@ -57,43 +76,50 @@ def get_twitter_api():
         access_token=secrets["TWITTER_ACCESS_TOKEN"],
         access_token_secret=secrets["TWITTER_ACCESS_TOKEN_SECRET"]
     )
-    
+
     # Verify credentials
     try:
         api_v1.verify_credentials()
     except Exception as e:
         raise ValueError(f"Twitter authentication failed: {e}")
-        
+
     return api_v1, client_v2
+
 
 def main():
     logger.info("Starting Tech Influencer Agent...")
-    
-    # 1. Validate Environment & Secrets FIRST (Fail Fast)
+
+    # COLD START OPTIMIZATION: Check scheduler FIRST before heavy initialization
+    # This avoids wasting API calls and compute time if we're not going to post
+    if not FORCE_POST:
+        from scheduler import should_post_lightweight
+        should_post, reason = should_post_lightweight()
+        if not should_post:
+            logger.info(f"Skipping post: {reason}")
+            logger.info("Set FORCE_POST=true to override scheduler")
+            logger.info("Cold start optimization: No heavy initialization performed")
+            sys.exit(0)  # Clean exit - not an error, minimal cost
+        logger.info(f"Scheduler approved: {reason}")
+    else:
+        logger.info("FORCE_POST enabled, bypassing scheduler check")
+
+    # 1. Validate Environment & Secrets (only after scheduler approves)
     try:
         Config.validate()
         api_v1, client_v2 = get_twitter_api()
     except Exception as e:
         logger.critical(f"Initialization Error: {e}")
-        sys.exit(1) # Exit with error code
+        sys.exit(1)
 
-    # 2. Initialize Brain
+    # 2. Initialize Brain (LAZY - only after we know we'll post)
+    # This is the expensive part: Vertex AI init, model discovery, Firestore
+    logger.info("Initializing AgentBrain (heavy initialization)...")
     try:
+        from brain import AgentBrain
         brain = AgentBrain()
     except Exception as e:
         logger.critical(f"Failed to initialize Brain: {e}")
         sys.exit(1)
-
-    # 2.5 Check if we should post now (scheduler-based decision)
-    if not FORCE_POST:
-        should_post, reason = brain.should_post_now()
-        if not should_post:
-            logger.info(f"Skipping post: {reason}")
-            logger.info("Set FORCE_POST=true to override scheduler")
-            sys.exit(0)  # Clean exit - not an error
-        logger.info(f"Proceeding to post: {reason}")
-    else:
-        logger.info("FORCE_POST enabled, bypassing scheduler check")
 
     # 3. Get Strategy (may return None if no quality content available)
     try:
@@ -114,6 +140,8 @@ def main():
         if strategy["type"] == "video":
             video_path = None
             try:
+                # Lazy import VeoClient only when needed
+                from veo_client import VeoClient
                 veo = VeoClient(project_id=Config.PROJECT_ID, region=Config.REGION)
                 video_path = veo.generate_video(strategy["video_prompt"])
                 
@@ -269,8 +297,8 @@ def main():
                     try:
                         os.remove(image_path)
                         logger.info(f"Cleaned up meme file: {image_path}")
-                    except:
-                        pass
+                    except Exception as cleanup_err:
+                        logger.warning(f"Failed to cleanup meme file: {cleanup_err}")
 
         elif strategy["type"] == "image":
             # IMAGE: AI-generated image with Imagen
@@ -356,9 +384,9 @@ def main():
         logger.critical(f"Critical execution error: {e}")
         # Try to log to Firestore if possible
         try:
-             brain.log_post(strategy, success=False, error=f"Critical Error: {e}")
-        except:
-             pass
+            brain.log_post(strategy, success=False, error=f"Critical Error: {e}")
+        except Exception as log_err:
+            logger.warning(f"Failed to log error to Firestore: {log_err}")
         sys.exit(1)
 
 if __name__ == "__main__":

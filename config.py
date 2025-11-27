@@ -9,9 +9,13 @@ class Config:
     REGION = os.getenv("REGION", "us-central1")
     # If BUDGET_MODE is "true" (case-insensitive), we skip video generation to save costs.
     BUDGET_MODE = os.getenv("BUDGET_MODE", "False").lower() == "true"
-    
+
     # Firestore Collection
     COLLECTION_NAME = "post_history"
+
+    # Timezone and locale settings (Australian Western Standard Time)
+    TIMEZONE = os.getenv("TIMEZONE", "Australia/Perth")  # AWST (UTC+8)
+    CURRENCY = os.getenv("CURRENCY", "AUD")
 
     @classmethod
     def validate(cls):
@@ -44,7 +48,6 @@ def get_secret(secret_id: str, project_id: str = None) -> str:
         response = _secret_client.access_secret_version(request={"name": name})
         return response.payload.data.decode("UTF-8")
     except Exception as e:
-        # Log error but don't print sensitive info if possible
         # Log error but don't print sensitive info if possible
         logger.error(f"Error fetching secret {secret_id}: {e}")
         raise
