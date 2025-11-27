@@ -1,0 +1,18 @@
+# Phantom Tech Influencer - Terraform Configuration
+#
+# Quick Setup (recommended):
+#   ./setup.sh YOUR_PROJECT_ID
+#
+# Manual Setup:
+#   cp terraform.tfvars.example terraform.tfvars
+#   Edit terraform.tfvars with your project ID
+#   terraform init && terraform apply
+
+# Required: Your GCP Project ID
+project_id = "your-gcp-project-id"
+
+# Optional: Override defaults
+# region             = "us-central1"
+# firestore_location = "nam5"
+# timezone           = "Australia/Perth"
+# budget_mode        = false

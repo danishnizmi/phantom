@@ -297,15 +297,25 @@ class AgentBrain:
         """
         Checks today's media generation from Firestore to enforce daily limits.
         Returns dict with counts: {'video': int, 'image': int, 'infographic': int, 'meme': int}
+
+        Uses configured timezone (AWST by default) for day boundary calculation.
         """
         import datetime
+        import pytz
 
         try:
-            # Get start of today (UTC)
-            today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            # Get configured timezone (AWST - Australia/Perth by default)
+            tz = pytz.timezone(Config.TIMEZONE)
 
-            # Query posts from today
-            docs = self.collection.where("timestamp", ">=", today_start).stream()
+            # Get start of today in local timezone, then convert to UTC for Firestore query
+            now_local = datetime.datetime.now(tz)
+            today_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_start_utc = today_start_local.astimezone(pytz.UTC)
+
+            logger.debug(f"Budget check: Local day start {today_start_local} = UTC {today_start_utc}")
+
+            # Query posts from today (using UTC timestamp for Firestore)
+            docs = self.collection.where("timestamp", ">=", today_start_utc).stream()
 
             counts = {'video': 0, 'image': 0, 'infographic': 0, 'meme': 0, 'text': 0}
             for doc in docs:
@@ -314,7 +324,7 @@ class AgentBrain:
                 if post_type in counts:
                     counts[post_type] += 1
 
-            logger.info(f"Today's media usage: {counts}")
+            logger.info(f"Today's media usage ({Config.TIMEZONE}): {counts}")
             return counts
 
         except Exception as e:
@@ -810,15 +820,21 @@ FORMAT_HINT: VIDEO or MEME or TEXT (just one word, nothing else)"""
         """
         Checks Firestore to see if we've recently posted about this topic or URL.
         Returns True if we should SKIP this topic (duplicate), False otherwise.
+
+        Uses proper Jaccard similarity (intersection/union) for topic matching.
         """
         try:
             # Check last 30 posts (increased from 20 for better duplicate detection)
             docs = self.collection.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(30).stream()
 
             def _normalize(text):
-                return set(text.lower().split())
+                """Normalize text to set of lowercase words, filtering short words."""
+                words = set(word.lower() for word in text.split() if len(word) > 2)
+                return words
 
             current_words = _normalize(topic)
+            if not current_words:
+                return False  # Can't check empty topic
 
             for doc in docs:
                 data = doc.to_dict()
@@ -830,14 +846,29 @@ FORMAT_HINT: VIDEO or MEME or TEXT (just one word, nothing else)"""
                     logger.info(f"URL '{url}' was already posted. Skipping to avoid duplicate.")
                     return True
 
-                # Keyword overlap check (Jaccard similarity) for topic
+                # Proper Jaccard similarity: intersection / union
                 stored_words = _normalize(stored_topic)
-                if not current_words: continue
-                overlap = len(stored_words & current_words) / len(current_words)
+                if not stored_words:
+                    continue
 
-                if overlap > 0.6: # 60% overlap
-                    logger.info(f"Topic '{topic}' matches recent post '{stored_topic}' (Overlap: {overlap:.2f}). Skipping.")
+                intersection = len(stored_words & current_words)
+                union = len(stored_words | current_words)
+
+                if union == 0:
+                    continue
+
+                jaccard_similarity = intersection / union
+
+                # Also check containment (for short vs long topic comparison)
+                # If one topic contains most of the other, it's likely a duplicate
+                containment = intersection / min(len(stored_words), len(current_words)) if min(len(stored_words), len(current_words)) > 0 else 0
+
+                # Duplicate if Jaccard > 0.5 OR containment > 0.7
+                if jaccard_similarity > 0.5 or containment > 0.7:
+                    logger.info(f"Topic '{topic[:40]}...' matches recent '{stored_topic[:40]}...' "
+                               f"(Jaccard: {jaccard_similarity:.2f}, Containment: {containment:.2f}). Skipping.")
                     return True
+
             return False
         except Exception as e:
             logger.warning(f"Firestore history check failed: {e}. Proceeding without check.")
