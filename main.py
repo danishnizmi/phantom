@@ -263,8 +263,22 @@ def main():
                 if image_path and os.path.exists(image_path):
                     # We have a fetched meme - upload and post
                     logger.info(f"Posting fetched meme from: {strategy.get('meme_source', 'Reddit')}")
-                    media = upload_media_v1(api_v1, image_path)
-                    post_tweet_v2(client_v2, text=strategy["content"], media_ids=[media.media_id])
+                    file_size = os.path.getsize(image_path)
+                    logger.info(f"Uploading meme file: {image_path} ({file_size} bytes)")
+
+                    # Upload media - use chunked upload for GIFs
+                    is_gif = image_path.lower().endswith('.gif')
+                    if is_gif:
+                        logger.info("Using chunked upload for GIF...")
+                        media = upload_media_v1(api_v1, image_path, chunked=True, media_category="tweet_gif")
+                    else:
+                        media = upload_media_v1(api_v1, image_path)
+
+                    logger.info(f"Media upload complete. media_id: {media.media_id}, media_id_string: {getattr(media, 'media_id_string', 'N/A')}")
+
+                    # Post tweet with media
+                    response = post_tweet_v2(client_v2, text=strategy["content"], media_ids=[media.media_id])
+                    logger.info(f"Tweet posted! Response: {response.data if hasattr(response, 'data') else response}")
                     logger.info(f"Meme posted successfully! Source: {strategy.get('meme_title', '')[:50]}")
                     brain.log_post(strategy, success=True)
                 else:
