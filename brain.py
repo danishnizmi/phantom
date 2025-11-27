@@ -1383,14 +1383,25 @@ Does it relate to actual topic "{topic}"? Are all claims real?
                 )
 
                 if not video_prompt:
-                    logger.warning("Could not generate valid video prompt - skipping video")
-                    # Return None to skip this post entirely (no fallback to junk)
-                    return None
-
-                logger.info(f"Generated video prompt: {video_prompt[:80]}...")
+                    logger.warning("Could not generate valid video prompt - falling back to meme/text")
+                    # Fallback to meme if budget allows, otherwise text
+                    image_count = usage.get('image', 0) + usage.get('infographic', 0) + usage.get('meme', 0)
+                    if image_count < 5:
+                        post_type = "meme"
+                        strategy["type"] = "meme"
+                        logger.info("Falling back to meme format")
+                    else:
+                        post_type = "text"
+                        strategy["type"] = "text"
+                        logger.info("Falling back to text format")
+                else:
+                    logger.info(f"Generated video prompt: {video_prompt[:80]}...")
             else:
                 # No researcher - generate simple prompt
                 video_prompt = f"Futuristic tech visualization about {topic[:50]}, neon lights, data streams, cinematic"
+
+        # Process video if we still have a valid prompt
+        if post_type == "video" and video_prompt:
 
             # Generate caption - dry, cynical style
             caption_prompt = f"""{BIG_BOSS_PERSONA}
