@@ -94,17 +94,11 @@ resource "google_artifact_registry_repository" "phantom_repo" {
 }
 
 # ============================================================================
-# Firestore Database - Reference existing database
+# Firestore Database
 # ============================================================================
-
-# Note: The default Firestore database already exists in the project
-# Using a data source to reference it instead of creating a new one
-data "google_firestore_database" "phantom_db" {
-  project = var.project_id
-  name    = "(default)"
-
-  depends_on = [google_project_service.required_apis["firestore.googleapis.com"]]
-}
+# Note: The default Firestore database is assumed to already exist in the project.
+# The Google provider doesn't support a data source for Firestore databases,
+# and we don't want to recreate it. The Cloud Run job will use it directly.
 
 # ============================================================================
 # Secret Manager - Reference EXISTING secrets (don't create new ones)
@@ -238,9 +232,9 @@ resource "google_cloud_run_v2_job" "phantom_job" {
 
   depends_on = [
     google_project_service.required_apis["run.googleapis.com"],
+    google_project_service.required_apis["firestore.googleapis.com"],
     google_artifact_registry_repository.phantom_repo,
     google_project_iam_member.phantom_sa_roles,
-    data.google_firestore_database.phantom_db,
   ]
 
   lifecycle {
