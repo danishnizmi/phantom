@@ -88,24 +88,23 @@ gcloud config set project "$PROJECT_ID" 2>/dev/null || true
 echo ""
 
 # ============================================================================
-# Step 1: Initialize and Apply Terraform
+# Step 1: Initialize Terraform and create prerequisites (APIs, Artifact Registry)
 # ============================================================================
-echo -e "${BLUE}Step 1: Creating infrastructure with Terraform...${NC}"
+echo -e "${BLUE}Step 1: Creating prerequisite infrastructure...${NC}"
 echo ""
 
 terraform init -input=false
 
 echo ""
-echo -e "${YELLOW}Planning infrastructure changes...${NC}"
-terraform plan -input=false -out=tfplan
+echo -e "${YELLOW}Creating APIs and Artifact Registry first...${NC}"
+# First, create only the APIs and Artifact Registry so we can build the image
+terraform apply -input=false -auto-approve \
+    -target=google_project_service.required_apis \
+    -target=google_artifact_registry_repository.phantom_repo \
+    -target=google_service_account.phantom_sa
 
 echo ""
-echo -e "${YELLOW}Applying infrastructure (this may take 3-5 minutes)...${NC}"
-terraform apply -input=false tfplan
-rm -f tfplan
-
-echo ""
-echo -e "${GREEN}✓ Infrastructure created successfully!${NC}"
+echo -e "${GREEN}✓ Prerequisites created!${NC}"
 
 # ============================================================================
 # Step 2: Build and Push Container
@@ -114,10 +113,8 @@ echo ""
 echo -e "${BLUE}Step 2: Building and pushing container image...${NC}"
 echo ""
 
-# Get values from Terraform
-REPO_URL=$(terraform output -raw artifact_registry_url)
-IMAGE_NAME="phantom-influencer"
-IMAGE_URL="${REPO_URL}/${IMAGE_NAME}:latest"
+# Build image URL
+IMAGE_URL="${REGION}-docker.pkg.dev/${PROJECT_ID}/phantom-influencer/phantom-influencer:latest"
 
 echo "Building image: $IMAGE_URL"
 echo ""
@@ -131,18 +128,19 @@ echo ""
 echo -e "${GREEN}✓ Container built and pushed!${NC}"
 
 # ============================================================================
-# Step 3: Update Cloud Run Job with new image
+# Step 3: Apply full Terraform (Cloud Run Job, Scheduler, IAM)
 # ============================================================================
 echo ""
-echo -e "${BLUE}Step 3: Updating Cloud Run Job...${NC}"
+echo -e "${BLUE}Step 3: Creating Cloud Run Job and Scheduler...${NC}"
+echo ""
 
-JOB_NAME=$(terraform output -raw job_name)
-gcloud run jobs update "$JOB_NAME" \
-    --image "$IMAGE_URL" \
-    --region "$REGION" \
-    --quiet
+terraform apply -input=false -auto-approve
 
-echo -e "${GREEN}✓ Cloud Run Job updated!${NC}"
+echo ""
+echo -e "${GREEN}✓ All infrastructure created!${NC}"
+
+# Get job name for output commands
+JOB_NAME=$(terraform output -raw job_name 2>/dev/null || echo "phantom-influencer")
 
 # ============================================================================
 # Step 4: Output next steps

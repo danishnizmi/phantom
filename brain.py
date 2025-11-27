@@ -874,6 +874,70 @@ FORMAT_HINT: VIDEO or MEME or TEXT (just one word, nothing else)"""
             logger.warning(f"Firestore history check failed: {e}. Proceeding without check.")
             return False
 
+    def _get_used_meme_urls(self, limit: int = 50) -> set:
+        """
+        Gets meme source URLs from recent posts to avoid duplicates.
+        Returns set of meme URLs that have been used recently.
+        """
+        try:
+            docs = self.collection.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(limit).stream()
+            used_urls = set()
+
+            for doc in docs:
+                data = doc.to_dict()
+                # Check for meme source URL (stored when posting memes)
+                meme_source = data.get("meme_source", "")
+                if meme_source:
+                    # Normalize URL - extract just the key part
+                    # For Giphy: extract the GIF ID
+                    if "giphy.com" in meme_source.lower():
+                        # Extract GIF ID from URL like https://giphy.com/gifs/XXX-xxxxx
+                        parts = meme_source.split("/")
+                        for part in parts:
+                            if "-" in part and len(part) > 10:
+                                used_urls.add(part.split("-")[-1])  # Get the ID after last dash
+                                break
+                        used_urls.add(meme_source)  # Also add full URL
+                    else:
+                        used_urls.add(meme_source)
+
+            logger.info(f"Found {len(used_urls)} previously used meme URLs")
+            return used_urls
+        except Exception as e:
+            logger.warning(f"Failed to get used meme URLs: {e}")
+            return set()
+
+    def _is_meme_used(self, meme_url: str, used_urls: set) -> bool:
+        """
+        Checks if a meme URL has been used recently.
+        Handles different URL formats (Giphy, Reddit, etc).
+        """
+        if not meme_url or not used_urls:
+            return False
+
+        # Direct match
+        if meme_url in used_urls:
+            return True
+
+        # For Giphy, extract and check the GIF ID
+        if "giphy.com" in meme_url.lower() or "media.giphy.com" in meme_url.lower():
+            # Try to extract GIF ID from various Giphy URL formats
+            # https://media.giphy.com/media/XXXXX/giphy.gif
+            # https://giphy.com/gifs/name-XXXXX
+            parts = meme_url.replace("https://", "").replace("http://", "").split("/")
+            for part in parts:
+                # Giphy IDs are typically alphanumeric, 10+ chars
+                clean_part = part.replace(".gif", "").replace(".mp4", "")
+                if clean_part in used_urls:
+                    return True
+                # Also check if ID is after a dash
+                if "-" in part:
+                    gif_id = part.split("-")[-1].replace(".gif", "")
+                    if gif_id in used_urls:
+                        return True
+
+        return False
+
     def _get_recent_categories(self, limit: int = 10) -> List[str]:
         """
         Gets categories of recent posts for variety and balance tracking.
@@ -1417,6 +1481,9 @@ Now generate for the article above.
                 logger.warning("Meme fetcher or researcher not available - skipping")
                 return None
 
+            # Get previously used meme URLs to avoid duplicates
+            used_meme_urls = self._get_used_meme_urls(limit=50)
+
             # Research memes from all sources (Reddit, Giphy, Imgflip)
             memes = self.meme_fetcher.research_memes(category, topic)
 
@@ -1424,12 +1491,24 @@ Now generate for the article above.
                 logger.warning("No memes found from any source - skipping post")
                 return None  # No fallback - just skip
 
+            # Filter out previously used memes
+            original_count = len(memes)
+            memes = [m for m in memes if not self._is_meme_used(m.get('url', ''), used_meme_urls)
+                     and not self._is_meme_used(m.get('permalink', ''), used_meme_urls)]
+            filtered_count = original_count - len(memes)
+            if filtered_count > 0:
+                logger.info(f"Filtered out {filtered_count} previously used memes, {len(memes)} remaining")
+
+            if not memes:
+                logger.warning("All memes have been used before - skipping post")
+                return None
+
             # Try to find an approved meme
             approved_meme = None
             meme_local_path = None
             caption = None
 
-            for meme in memes[:3]:  # Check top 3 candidates only (cost efficient - already sorted by score)
+            for meme in memes[:5]:  # Check top 5 candidates (increased from 3 since some may be filtered)
                 logger.info(f"Evaluating meme: {meme.get('title', '')[:40]}... from {meme.get('source', '')}")
 
                 # AI validates safety and engagement
