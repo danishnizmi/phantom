@@ -15,11 +15,82 @@ import requests
 import random
 import tempfile
 import os
+import re
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# AI Response Utilities - Robust parsing for AI outputs
+# ============================================================================
+
+def parse_ai_field(response: str, field_name: str, default: str = '') -> str:
+    """Safely extract a field value from AI response."""
+    if not response:
+        return default
+
+    patterns = [
+        rf'{field_name}:\s*(.+?)(?:\n|$)',
+        rf'{field_name}:\s*([^\n]+)',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, response, re.IGNORECASE)
+        if match:
+            value = match.group(1).strip()
+            value = value.replace('**', '').replace('*', '').strip('"').strip("'")
+            if value and value.upper() != 'N/A':
+                return value
+
+    return default
+
+
+def parse_ai_boolean(response: str, field_name: str, default: bool = True) -> bool:
+    """Safely extract a boolean field."""
+    value = parse_ai_field(response, field_name, '').upper()
+
+    if value in ('YES', 'TRUE', '1', 'Y'):
+        return True
+    elif value in ('NO', 'FALSE', '0', 'N'):
+        return False
+
+    # Check anywhere in response
+    pattern = rf'{field_name}[:\s]*(YES|NO)'
+    match = re.search(pattern, response.upper())
+    if match:
+        return match.group(1) == 'YES'
+
+    return default
+
+
+def clean_ai_prompt(prompt: str, min_length: int = 30) -> Optional[str]:
+    """Clean an AI-generated prompt for video/image generation."""
+    if not prompt:
+        return None
+
+    prefixes = [
+        'VIDEO_PROMPT:', 'VIDEO PROMPT:', 'PROMPT:',
+        'IMAGE_PROMPT:', 'IMAGE PROMPT:',
+        'Here is', "Here's", 'OUTPUT:', 'RESPONSE:',
+    ]
+    cleaned = prompt.strip()
+    for prefix in prefixes:
+        if cleaned.upper().startswith(prefix.upper()):
+            cleaned = cleaned[len(prefix):].strip()
+
+    cleaned = cleaned.replace('**', '').replace('*', '').replace('`', '')
+    cleaned = cleaned.split('\n')[0].strip().strip('"').strip("'")
+
+    if len(cleaned) < min_length:
+        return None
+
+    if any(fail in cleaned.upper() for fail in ['CANNOT', 'UNABLE', 'ERROR', 'SORRY']):
+        return None
+
+    return cleaned
 
 
 class MemeSource(ABC):
@@ -394,34 +465,24 @@ IS_TRENDING: <YES|NO>
         try:
             response = self.generate(prompt)
 
+            # Use robust parsing utilities
+            fmt = parse_ai_field(response, 'RECOMMENDED_FORMAT', 'TEXT').upper()
+            if fmt not in ['TEXT', 'MEME', 'INFOGRAPHIC', 'VIDEO']:
+                fmt = 'TEXT'
+
+            conf = parse_ai_field(response, 'CONFIDENCE', 'LOW').upper()
+            if conf not in ['HIGH', 'MEDIUM', 'LOW']:
+                conf = 'LOW'
+
             result = {
-                'format': 'TEXT',
-                'confidence': 'LOW',
-                'reasoning': '',
-                'style_notes': '',
-                'is_trending': False
+                'format': fmt,
+                'confidence': conf,
+                'reasoning': parse_ai_field(response, 'REASONING', ''),
+                'style_notes': parse_ai_field(response, 'STYLE_NOTES', ''),
+                'is_trending': parse_ai_boolean(response, 'IS_TRENDING', False)
             }
 
-            if 'RECOMMENDED_FORMAT:' in response:
-                fmt = response.split('RECOMMENDED_FORMAT:')[1].split('\n')[0].strip().upper()
-                if fmt in ['TEXT', 'MEME', 'INFOGRAPHIC', 'VIDEO']:
-                    result['format'] = fmt
-
-            if 'CONFIDENCE:' in response:
-                conf = response.split('CONFIDENCE:')[1].split('\n')[0].strip().upper()
-                if conf in ['HIGH', 'MEDIUM', 'LOW']:
-                    result['confidence'] = conf
-
-            if 'REASONING:' in response:
-                result['reasoning'] = response.split('REASONING:')[1].split('\n')[0].strip()
-
-            if 'STYLE_NOTES:' in response:
-                result['style_notes'] = response.split('STYLE_NOTES:')[1].split('\n')[0].strip()
-
-            if 'IS_TRENDING:' in response:
-                result['is_trending'] = 'YES' in response.split('IS_TRENDING:')[1].split('\n')[0].upper()
-
-            logger.info(f"Research result: {result['format']} ({result['confidence']}) - {result['reasoning'][:50]}")
+            logger.info(f"Research result: {result['format']} ({result['confidence']}) - {result['reasoning'][:50] if result['reasoning'] else 'N/A'}")
             return result
 
         except Exception as e:
@@ -481,17 +542,10 @@ SUGGESTED_CAPTION: <caption or N/A>
         try:
             response = self.generate(prompt)
 
-            approved = 'APPROVED: YES' in response.upper()
-            reason = ''
-            caption = ''
-
-            if 'REASON:' in response:
-                reason = response.split('REASON:')[1].split('\n')[0].strip()
-
-            if approved and 'SUGGESTED_CAPTION:' in response:
-                caption = response.split('SUGGESTED_CAPTION:')[1].split('\n')[0].strip()
-                if caption.upper() == 'N/A':
-                    caption = ''
+            # Use robust parsing utilities
+            approved = parse_ai_boolean(response, 'APPROVED', default=False)
+            reason = parse_ai_field(response, 'REASON', 'No reason provided')
+            caption = parse_ai_field(response, 'SUGGESTED_CAPTION', '') if approved else ''
 
             return {
                 'approved': approved,
@@ -545,31 +599,13 @@ YOUR VIDEO PROMPT (just the description, no labels):"""
         try:
             response = self.generate(prompt)
 
-            # Clean up response - remove any labels, quotes, markdown
-            video_prompt = response.strip()
+            # Use robust cleaning utility
+            video_prompt = clean_ai_prompt(response, min_length=30)
 
-            # Remove common prefixes the AI might add
-            remove_prefixes = ['VIDEO_PROMPT:', 'VIDEO PROMPT:', 'PROMPT:', 'Here is', 'Here\'s', '**', '*']
-            for prefix in remove_prefixes:
-                if video_prompt.upper().startswith(prefix.upper()):
-                    video_prompt = video_prompt[len(prefix):].strip()
-
-            # Remove markdown formatting
-            video_prompt = video_prompt.replace('**', '').replace('*', '').strip()
-
-            # Get first line only, remove quotes
-            video_prompt = video_prompt.split('\n')[0].strip().strip('"').strip("'")
-
-            # Final validation
-            if len(video_prompt) < 30:
-                logger.warning(f"Video prompt too short ({len(video_prompt)} chars): {video_prompt}")
-                # Generate a fallback based on theme
+            # If cleaning failed, use themed fallback
+            if not video_prompt:
+                logger.warning(f"AI response invalid, using themed fallback")
                 video_prompt = f"Cinematic visualization of {theme_hint}, dramatic lighting, futuristic aesthetic, 4K quality"
-                logger.info(f"Using fallback video prompt: {video_prompt[:50]}...")
-
-            if 'CANNOT' in video_prompt.upper() or len(video_prompt) < 30:
-                logger.warning("AI could not generate valid video prompt, using default")
-                video_prompt = f"Cinematic visualization of {theme_hint}, neon lights, data streams, dramatic camera movement"
 
             logger.info(f"Generated video prompt: {video_prompt[:80]}...")
             return video_prompt
@@ -613,20 +649,13 @@ INFOGRAPHIC_PROMPT:"""
         try:
             response = self.generate(prompt)
 
-            if 'CANNOT_GENERATE' in response.upper():
+            # Use robust cleaning utility
+            infographic_prompt = clean_ai_prompt(response, min_length=30)
+
+            if not infographic_prompt:
                 logger.warning("AI could not generate valid infographic prompt")
-                return None
-
-            if 'INFOGRAPHIC_PROMPT:' in response:
-                infographic_prompt = response.split('INFOGRAPHIC_PROMPT:')[1].strip()
-            else:
-                infographic_prompt = response.strip()
-
-            infographic_prompt = infographic_prompt.split('\n')[0].strip().strip('"')
-
-            if len(infographic_prompt) < 30:
-                logger.warning(f"Infographic prompt too short")
-                return None
+                # Return a sensible fallback based on topic
+                infographic_prompt = f"Professional tech infographic about {topic[:40]}, clean design, educational diagram, modern style"
 
             return infographic_prompt
 

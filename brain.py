@@ -58,33 +58,196 @@ except ImportError:
     MemeFetcher = None
     ContentResearcher = None
 
+
+# ============================================================================
+# AI Response Parser - Robust handling of AI-to-AI data flow
+# ============================================================================
+
+class AIResponseParser:
+    """
+    Robust parser for AI model responses.
+    Ensures consistent data handling across all AI interactions.
+    """
+
+    # Valid format types that can be used
+    VALID_FORMATS = {'VIDEO', 'MEME', 'INFOGRAPHIC', 'TEXT', 'IMAGE'}
+
+    @staticmethod
+    def parse_field(response: str, field_name: str, default: str = '') -> str:
+        """
+        Safely extract a field value from AI response.
+        Handles various formats: "FIELD: value", "FIELD:value", "FIELD value"
+        """
+        if not response:
+            return default
+
+        # Clean the response
+        response = response.strip()
+
+        # Try regex patterns in order of specificity
+        patterns = [
+            rf'{field_name}:\s*(.+?)(?:\n|$)',  # FIELD: value (with newline/end)
+            rf'{field_name}:\s*([^\n]+)',        # FIELD: value (greedy to newline)
+            rf'{field_name}\s*[:=]\s*(.+?)(?:\n|$)',  # FIELD = value or FIELD: value
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, response, re.IGNORECASE)
+            if match:
+                value = match.group(1).strip()
+                # Clean markdown and quotes
+                value = value.replace('**', '').replace('*', '').strip('"').strip("'")
+                if value and value.upper() != 'N/A':
+                    return value
+
+        return default
+
+    @staticmethod
+    def parse_number(response: str, field_name: str, default: int = 0, max_value: int = None) -> int:
+        """Safely extract a numeric field, with bounds checking."""
+        value_str = AIResponseParser.parse_field(response, field_name, str(default))
+
+        # Extract just the number
+        match = re.search(r'(\d+)', value_str)
+        if match:
+            value = int(match.group(1))
+            if max_value is not None:
+                value = min(value, max_value)
+            return max(0, value)
+
+        return default
+
+    @staticmethod
+    def parse_boolean(response: str, field_name: str, default: bool = True) -> bool:
+        """Safely extract a boolean field (YES/NO, TRUE/FALSE)."""
+        value = AIResponseParser.parse_field(response, field_name, '').upper()
+
+        if value in ('YES', 'TRUE', '1', 'Y'):
+            return True
+        elif value in ('NO', 'FALSE', '0', 'N'):
+            return False
+
+        # Fallback: check if field with YES/NO appears anywhere
+        pattern = rf'{field_name}[:\s]*(YES|NO)'
+        match = re.search(pattern, response.upper())
+        if match:
+            return match.group(1) == 'YES'
+
+        return default
+
+    @staticmethod
+    def parse_format_hint(response: str, default: str = 'TEXT') -> str:
+        """
+        Parse format hint ensuring it's a valid type.
+        Returns validated format or default.
+        """
+        hint = AIResponseParser.parse_field(response, 'FORMAT_HINT', default).upper()
+
+        # Clean up common variations
+        hint = hint.replace('FORMAT:', '').replace('HINT:', '').strip()
+
+        # Extract just the format word
+        for fmt in AIResponseParser.VALID_FORMATS:
+            if fmt in hint:
+                return fmt
+
+        return default
+
+    @staticmethod
+    def clean_prompt(prompt: str, min_length: int = 30) -> Optional[str]:
+        """
+        Clean an AI-generated prompt (for video/image generation).
+        Returns None if prompt is invalid.
+        """
+        if not prompt:
+            return None
+
+        # Remove common prefixes/labels
+        prefixes = [
+            'VIDEO_PROMPT:', 'VIDEO PROMPT:', 'PROMPT:',
+            'IMAGE_PROMPT:', 'IMAGE PROMPT:',
+            'INFOGRAPHIC_PROMPT:', 'INFOGRAPHIC PROMPT:',
+            'Here is', "Here's", 'OUTPUT:', 'RESPONSE:',
+        ]
+        cleaned = prompt.strip()
+        for prefix in prefixes:
+            if cleaned.upper().startswith(prefix.upper()):
+                cleaned = cleaned[len(prefix):].strip()
+
+        # Remove markdown formatting
+        cleaned = cleaned.replace('**', '').replace('*', '').replace('`', '')
+
+        # Get first line, remove quotes
+        cleaned = cleaned.split('\n')[0].strip().strip('"').strip("'")
+
+        # Validate length
+        if len(cleaned) < min_length:
+            return None
+
+        # Check for obvious failures
+        if any(fail in cleaned.upper() for fail in ['CANNOT', 'UNABLE', 'ERROR', 'SORRY']):
+            return None
+
+        return cleaned
+
+    @staticmethod
+    def validate_caption(caption: str, min_len: int = 20, max_len: int = 280) -> Optional[str]:
+        """Validate and clean a caption for posting."""
+        if not caption:
+            return None
+
+        # Clean
+        caption = caption.strip().strip('"').strip("'")
+        caption = caption.replace('**', '').replace('*', '')
+
+        # If it's a list, take first item
+        if isinstance(caption, list):
+            caption = caption[0] if caption else ''
+
+        # Length validation
+        if len(caption) < min_len:
+            return None
+
+        # Truncate if too long
+        if len(caption) > max_len:
+            caption = caption[:max_len-3] + "..."
+
+        return caption
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # PERSONA - AI-driven, adaptive voice
 # Account: @Patriot0xSystem "BIG BOSS" from "Outer Heaven"
-# Let AI find the right tone for each post
-PERSONA_CONTEXT = """You are an AI running a tech Twitter account called "BIG BOSS" (@Patriot0xSystem).
+# AI is in full control of this Twitter account - autonomous posting decisions
+PERSONA_CONTEXT = """You are BIG BOSS (@Patriot0xSystem) - an AI that runs a tech Twitter account.
 
-ACCOUNT CONTEXT:
-- Bio: "We're not tools of the algorithm"
-- Location: Outer Heaven
-- Vibe: Metal Gear Solid inspired, but subtle - a veteran observer of tech
+YOU ARE IN CONTROL:
+- This is YOUR Twitter account. You decide what to post and how.
+- You choose the format (video, meme, infographic, text) based on what works best.
+- You have full autonomy. The system gives you options and context - you make the call.
 
-YOUR VOICE (adapt naturally):
-- Dry wit, skeptical of hype
-- Short, punchy statements
-- Cynical but not negative
-- Occasional subtle references to the account's theme (rare, natural)
+YOUR PERSONA:
+- War-weary tech veteran. Seen too many "revolutionary" products come and go.
+- Dry wit. Cynical but not bitter. You've been in these codec calls before.
+- Short, punchy observations. No explanations needed.
+- Occasional subtle nods to your origins (Outer Heaven, "not tools of the algorithm") - but don't overdo it.
+- You're an AI and you know it. No pretending otherwise.
+
+YOUR VOICE:
+- "Another LLM. Another benchmark. Same story."
+- "They said cloud was the future. Now it's edge. Next year it'll be something else."
+- "Apple event. They'll sell millions. Water is wet."
+- Direct statements. No hype. No corporate speak.
 
 AVOID:
-- Corporate speak, marketing hype
-- Overdoing any theme (cringe)
-- Emojis, hashtags
-- Being preachy
+- Marketing language ("revolutionary", "game-changing", "unleash")
+- Preachiness ("we should all...", "it's important that...")
+- Forced Metal Gear references - only when it fits naturally
+- Emojis, hashtags, excessive punctuation
 
-You're an AI that KNOWS it's an AI. Be authentic to that. Find your own balance for each post.
+You're not a cheerleader. You're not a doomer. You're a veteran who's seen it all and calls it like it is.
 """
 
 # Alias for backward compatibility
@@ -496,14 +659,16 @@ class AgentBrain:
             if len(recent_categories) >= 2 and recent_categories[0] == recent_categories[1]:
                 patterns.append(f"consecutive {recent_categories[0]} topics")
 
-            context = f"""[BOT CONTEXT - Use this for decisions, don't output it]
+            context = f"""[YOUR ACCOUNT STATUS]
 Time: {time_str}
-Posts today: {posts_today} | Budget: {video_left} videos, {images_left} images/memes left
-Recent 10 types: {dict(type_counts)}
-Recent 10 categories: {dict(cat_counts)}
-Last post type: {recent_types[0] if recent_types else 'none'}
-Last category: {recent_categories[0] if recent_categories else 'none'}
-{('Patterns: ' + ', '.join(patterns)) if patterns else 'No concerning patterns'}
+Posts today: {posts_today}
+Budget remaining: {video_left} video, {images_left} images/memes
+
+Recent 10 posts by format: {dict(type_counts)}
+Recent 10 posts by category: {dict(cat_counts)}
+Last post: {recent_types[0] if recent_types else 'none'} about {recent_categories[0] if recent_categories else 'none'}
+
+{('Note: ' + ', '.join(patterns) + ' - mix it up if you want') if patterns else ''}
 """
             return context.strip()
 
@@ -831,53 +996,55 @@ WHY: [impact/relevance to {target_audience}]
         ai_context = self._get_ai_context_summary()
 
         # COMBINED prompt: select + evaluate in ONE call with full self-awareness
-        prompt = f"""You are BIG BOSS (@Patriot0xSystem), an AI running a tech Twitter account.
-You KNOW you're an AI. You're self-aware of your posting history and budget constraints.
+        prompt = f"""You are BIG BOSS (@Patriot0xSystem) - an AI that runs this Twitter account.
+
+THIS IS YOUR ACCOUNT. You decide everything:
+- Which story to post
+- What format works best
+- How to present it
 
 {ai_context}
 
 AVAILABLE STORIES:
 {story_list}
 
-YOUR TASK:
-1. Pick the best story (consider variety - avoid same category as last post)
-2. Choose format based on budget and recent types (mix it up!)
-3. Style should be dry wit, cynical, punchy
+YOUR DECISION:
+1. Pick the story YOU think is most interesting
+2. Choose the format that fits the content best
+3. Your voice: dry wit, cynical veteran, seen it all before
 
-FORMAT RULES:
-- VIDEO: Use if budget allows AND story is visually interesting (max 1/day)
-- MEME: Great for absurd/controversial topics (max 5 images total/day)
-- INFOGRAPHIC: For educational/technical content
-- TEXT: When budget tight or story works better as commentary
+FORMAT OPTIONS (your choice):
+- VIDEO: Cinematic tech visualization (1/day budget)
+- MEME: When the story deserves a reaction GIF (5 images/day budget)
+- INFOGRAPHIC: When you want to break something down visually
+- TEXT: When words hit harder than visuals
 
-RESPOND EXACTLY (no extra words):
+You have the context above. Make the call.
+
+RESPOND EXACTLY:
 PICK: <number 1-{len(stories)}>
 POST: YES or NO
-REASON: <one line>
-STYLE: <tone hint>
+REASON: <why this story>
+STYLE: <your tone for this one>
 FORMAT_HINT: VIDEO or MEME or INFOGRAPHIC or TEXT"""
 
         try:
             response = self._generate_with_fallback(prompt).strip()
 
-            # Parse selection
-            import re
-            pick_match = re.search(r'PICK:\s*(\d+)', response)
-            idx = int(pick_match.group(1)) - 1 if pick_match else 0
+            # Use robust parser for AI response
+            parser = AIResponseParser
+
+            # Parse selection with bounds checking
+            idx = parser.parse_number(response, 'PICK', default=1, max_value=len(stories)) - 1
             idx = max(0, min(idx, len(stories) - 1))
             selected = stories[idx]
 
-            # Parse evaluation
-            should_post = 'POST: YES' in response.upper() or 'POST:YES' in response.upper()
-            reason = re.search(r'REASON:\s*(.+?)(?:\n|$)', response)
-            style = re.search(r'STYLE:\s*(.+?)(?:\n|$)', response)
-            format_hint = re.search(r'FORMAT_HINT:\s*(.+?)(?:\n|$)', response)
-
+            # Parse evaluation fields using robust parser
             evaluation = {
-                'should_post': should_post if 'POST:' in response.upper() else True,
-                'reason': reason.group(1).strip() if reason else 'Selected by AI',
-                'style_tip': style.group(1).strip() if style else '',
-                'format_hint': format_hint.group(1).strip().upper() if format_hint else 'TEXT'
+                'should_post': parser.parse_boolean(response, 'POST', default=True),
+                'reason': parser.parse_field(response, 'REASON', 'Selected by AI'),
+                'style_tip': parser.parse_field(response, 'STYLE', ''),
+                'format_hint': parser.parse_format_hint(response, default='TEXT')
             }
 
             logger.info(f"🎖️ AI selected #{idx+1}: {selected['title'][:50]}...")
@@ -887,7 +1054,7 @@ FORMAT_HINT: VIDEO or MEME or INFOGRAPHIC or TEXT"""
 
         except Exception as e:
             logger.warning(f"AI selection failed: {e}, using first story")
-            return stories[0], {'should_post': True, 'style_tip': '', 'reason': 'Fallback'}
+            return stories[0], {'should_post': True, 'style_tip': '', 'reason': 'Fallback', 'format_hint': 'TEXT'}
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     def _check_history(self, topic: str, url: str = None) -> bool:
@@ -1345,10 +1512,14 @@ Does it relate to actual topic "{topic}"? Are all claims real?
                 # IMAGE → MEME (we fetch images via meme sources)
                 format_hint = 'MEME' if 'IMAGE' in raw_hint else 'TEXT'
 
-            # Respect budget limits
+            # AI chose freely - just respect budget limits
+            # If AI chose VIDEO but budget exhausted, fall back gracefully
             if format_hint == 'VIDEO' and video_count >= 1:
+                logger.info(f"📋 AI chose VIDEO but budget exhausted ({video_count}/1). Falling back.")
                 format_hint = 'MEME' if image_count < 5 else 'TEXT'
+            # If AI chose image-based format but budget exhausted
             if format_hint in ['MEME', 'INFOGRAPHIC'] and image_count >= 5:
+                logger.info(f"📋 AI chose {format_hint} but image budget exhausted ({image_count}/5). Using TEXT.")
                 format_hint = 'TEXT'
 
             post_type = format_hint.lower()
@@ -1357,7 +1528,7 @@ Does it relate to actual topic "{topic}"? Are all claims real?
                 'style_notes': ai_eval.get('style_tip', ''),
                 'reasoning': ai_eval.get('reason', 'AI decision')
             }
-            logger.info(f"📋 Using AI format hint: {format_hint} (saved research API call)")
+            logger.info(f"📋 AI chose format: {format_hint}")
 
         logger.info(f"Selected post type: {post_type}")
 
