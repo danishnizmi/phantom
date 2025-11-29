@@ -10,9 +10,13 @@ logger = logging.getLogger(__name__)
 
 class VeoClient:
     # Veo model variants to try (in order of preference)
+    # See: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/veo-video-generation
     VEO_MODELS = [
-        "veo-2.0-generate-001",   # Veo 2 - primary
-        "veo-001",                 # Veo 1 fallback
+        "veo-3.0-fast-generate-001",  # Veo 3 Fast - best latency
+        "veo-3.0-generate-001",       # Veo 3 - highest quality
+        "veo-2.0-generate-001",       # Veo 2 GA
+        "veo-2.0-generate-exp",       # Veo 2 Experimental
+        "veo-2.0-generate-preview",   # Veo 2 Preview
     ]
 
     def __init__(self, project_id: str, region: str):
