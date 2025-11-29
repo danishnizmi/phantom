@@ -1532,6 +1532,10 @@ Does it relate to actual topic "{topic}"? Are all claims real?
 
         logger.info(f"Selected post type: {post_type}")
 
+        # Track whether content generation succeeded (for meme/infographic fallback)
+        content_generated = False
+        original_post_type = post_type  # Remember original type for logging
+
         strategy = {
             "topic": topic,
             "type": post_type,
@@ -1720,60 +1724,57 @@ Now generate for the article above.
             strategy["image_prompt"] = visual_prompt
 
         elif post_type == "meme":
-            # AGENTIC MEME: Research from multiple sources, validate with AI, no fallbacks
+            # AGENTIC MEME: Research from multiple sources, validate with AI, fall back to text if needed
             logger.info(f"🔍 Researching memes for: {topic}")
             category = story.get('category', 'tech')
+            meme_generated = False  # Track if meme generation succeeded
 
-            if not self.meme_fetcher or not self.content_researcher:
-                logger.warning("Meme fetcher or researcher not available - skipping")
-                return None
+            if self.meme_fetcher and self.content_researcher:
+                try:
+                    # Get previously used meme URLs to avoid duplicates
+                    used_meme_urls = self._get_used_meme_urls(limit=50)
 
-            # Get previously used meme URLs to avoid duplicates
-            used_meme_urls = self._get_used_meme_urls(limit=50)
+                    # Research memes from all sources (Reddit, Giphy, Imgflip)
+                    memes = self.meme_fetcher.research_memes(category, topic)
 
-            # Research memes from all sources (Reddit, Giphy, Imgflip)
-            memes = self.meme_fetcher.research_memes(category, topic)
+                    if not memes:
+                        logger.warning("No memes found from any source - falling back to text")
+                    else:
+                        # Filter out previously used memes
+                        original_count = len(memes)
+                        memes = [m for m in memes if not self._is_meme_used(m.get('url', ''), used_meme_urls)
+                                 and not self._is_meme_used(m.get('permalink', ''), used_meme_urls)]
+                        filtered_count = original_count - len(memes)
+                        if filtered_count > 0:
+                            logger.info(f"Filtered out {filtered_count} previously used memes, {len(memes)} remaining")
 
-            if not memes:
-                logger.warning("No memes found from any source - skipping post")
-                return None  # No fallback - just skip
+                        if not memes:
+                            logger.warning("All memes have been used before - falling back to text")
+                        else:
+                            # Try to find an approved meme
+                            approved_meme = None
+                            meme_local_path = None
+                            caption = None
 
-            # Filter out previously used memes
-            original_count = len(memes)
-            memes = [m for m in memes if not self._is_meme_used(m.get('url', ''), used_meme_urls)
-                     and not self._is_meme_used(m.get('permalink', ''), used_meme_urls)]
-            filtered_count = original_count - len(memes)
-            if filtered_count > 0:
-                logger.info(f"Filtered out {filtered_count} previously used memes, {len(memes)} remaining")
+                            for meme in memes[:5]:  # Check top 5 candidates
+                                logger.info(f"Evaluating meme: {meme.get('title', '')[:40]}... from {meme.get('source', '')}")
 
-            if not memes:
-                logger.warning("All memes have been used before - skipping post")
-                return None
+                                # AI validates safety and engagement
+                                validation = self.content_researcher.validate_meme(meme, topic)
 
-            # Try to find an approved meme
-            approved_meme = None
-            meme_local_path = None
-            caption = None
+                                if validation['approved']:
+                                    logger.info(f"✓ Meme approved: {validation['reason']}")
 
-            for meme in memes[:5]:  # Check top 5 candidates (increased from 3 since some may be filtered)
-                logger.info(f"Evaluating meme: {meme.get('title', '')[:40]}... from {meme.get('source', '')}")
+                                    # Try to download
+                                    meme_local_path = self.meme_fetcher.download_meme(meme['url'])
 
-                # AI validates safety and engagement
-                validation = self.content_researcher.validate_meme(meme, topic)
+                                    if meme_local_path:
+                                        approved_meme = meme
+                                        caption = validation.get('suggested_caption', '')
 
-                if validation['approved']:
-                    logger.info(f"✓ Meme approved: {validation['reason']}")
-
-                    # Try to download
-                    meme_local_path = self.meme_fetcher.download_meme(meme['url'])
-
-                    if meme_local_path:
-                        approved_meme = meme
-                        caption = validation.get('suggested_caption', '')
-
-                        # Generate caption if not provided - dry wit style
-                        if not caption:
-                            caption_prompt = f"""Write a short, witty caption for this meme.
+                                        # Generate caption if not provided - dry wit style
+                                        if not caption:
+                                            caption_prompt = f"""Write a short, witty caption for this meme.
 
 MEME: {meme.get('title', '')}
 TOPIC: {topic}
@@ -1781,73 +1782,82 @@ TOPIC: {topic}
 Requirements: 50-100 chars, dry humor, no hashtags, no emojis.
 
 CAPTION:"""
-                            caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
+                                            caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
 
-                        break
-                    else:
-                        logger.warning("Download failed, trying next meme")
-                else:
-                    logger.debug(f"Meme rejected: {validation['reason']}")
+                                        break
+                                    else:
+                                        logger.warning("Download failed, trying next meme")
+                                else:
+                                    logger.debug(f"Meme rejected: {validation['reason']}")
 
-            if not approved_meme:
-                logger.warning("No meme passed validation - skipping post entirely")
-                return None  # No fallback to junk
+                            if approved_meme:
+                                # Add URL to caption
+                                if story_url and story_url not in caption:
+                                    if len(caption) + len(story_url) + 4 <= 280:
+                                        caption = f"{caption}\n\n{story_url}"
+                                    else:
+                                        max_len = 280 - len(story_url) - 7
+                                        caption = f"{caption[:max_len]}...\n\n{story_url}"
 
-            # Add URL to caption
-            if story_url and story_url not in caption:
-                if len(caption) + len(story_url) + 4 <= 280:
-                    caption = f"{caption}\n\n{story_url}"
-                else:
-                    max_len = 280 - len(story_url) - 7
-                    caption = f"{caption[:max_len]}...\n\n{story_url}"
+                                strategy["content"] = caption
+                                strategy["meme_local_path"] = meme_local_path
+                                strategy["meme_source"] = approved_meme.get('permalink', approved_meme.get('source', ''))
+                                strategy["meme_title"] = approved_meme.get('title', '')
+                                strategy["source_url"] = story_url
+                                meme_generated = True
+                                content_generated = True
+                                logger.info(f"Meme strategy ready: {approved_meme.get('title', '')[:40]}...")
+                            else:
+                                logger.warning("No meme passed validation - falling back to text")
+                except Exception as e:
+                    logger.warning(f"Meme generation failed: {e} - falling back to text")
+            else:
+                logger.warning("Meme fetcher or researcher not available - falling back to text")
 
-            strategy["content"] = caption
-            strategy["meme_local_path"] = meme_local_path
-            strategy["meme_source"] = approved_meme.get('permalink', approved_meme.get('source', ''))
-            strategy["meme_title"] = approved_meme.get('title', '')
-            strategy["source_url"] = story_url
-            logger.info(f"Meme strategy ready: {approved_meme.get('title', '')[:40]}...")
+            # Fall back to text if meme generation failed
+            if not meme_generated:
+                logger.info(f"📝 Falling back to text post for: {topic}")
+                post_type = "text"
+                strategy["type"] = "text"
+                strategy["fallback_from"] = "meme"
 
         elif post_type == "infographic":
-            # AGENTIC INFOGRAPHIC: Validated prompts, no junk generation
+            # AGENTIC INFOGRAPHIC: Validated prompts, fall back to text if needed
             logger.info(f"📊 Creating infographic for: {topic}")
+            infographic_generated = False  # Track if infographic generation succeeded
 
-            # Extract key points from article context
-            key_points_prompt = f"""Extract 3-5 KEY CONCEPTS from this article for an infographic.
+            try:
+                # Extract key points from article context
+                key_points_prompt = f"""Extract 3-5 KEY CONCEPTS from this article for an infographic.
 
 ARTICLE: {story_context[:600]}
 
 Return ONLY a comma-separated list of concepts (2-4 words each):"""
 
-            try:
                 key_points_response = self._generate_with_fallback(key_points_prompt)
                 key_points = [kp.strip() for kp in key_points_response.split(',')][:5]
                 key_points = [kp for kp in key_points if len(kp) > 2]  # Filter empty
                 logger.info(f"Key points: {key_points}")
-            except Exception as e:
-                logger.warning(f"Key points extraction failed: {e}")
-                return None  # No fallback
 
-            if len(key_points) < 2:
-                logger.warning("Not enough key points extracted - skipping infographic")
-                return None
+                if len(key_points) < 2:
+                    logger.warning("Not enough key points extracted - falling back to text")
+                else:
+                    # Generate and validate infographic prompt
+                    infographic_visual_prompt = None
 
-            # Generate and validate infographic prompt
-            infographic_visual_prompt = None
+                    if self.content_researcher:
+                        infographic_visual_prompt = self.content_researcher.generate_infographic_prompt(
+                            topic=topic,
+                            context=story_context,
+                            key_points=key_points
+                        )
 
-            if self.content_researcher:
-                infographic_visual_prompt = self.content_researcher.generate_infographic_prompt(
-                    topic=topic,
-                    context=story_context,
-                    key_points=key_points
-                )
+                    if not infographic_visual_prompt:
+                        # Fallback to simple prompt
+                        infographic_visual_prompt = f"Clean professional infographic explaining {topic[:50]}. Blue and white color scheme, icons and diagrams, educational visualization, minimalist tech style."
 
-            if not infographic_visual_prompt:
-                # Fallback to simple prompt
-                infographic_visual_prompt = f"Clean professional infographic explaining {topic[:50]}. Blue and white color scheme, icons and diagrams, educational visualization, minimalist tech style."
-
-            # Generate caption - informative but casual
-            caption_prompt = f"""Write a caption for this infographic.
+                    # Generate caption - informative but casual
+                    caption_prompt = f"""Write a caption for this infographic.
 
 TOPIC: {topic}
 KEY POINTS: {', '.join(key_points)}
@@ -1856,30 +1866,38 @@ Requirements: 80-120 chars, informative but casual, no hashtags, no emojis.
 
 CAPTION:"""
 
-            try:
-                caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
-                if len(caption) < 20:
-                    logger.warning("Caption too short - skipping")
-                    return None
+                    caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
+                    if len(caption) < 20:
+                        logger.warning("Caption too short - falling back to text")
+                    else:
+                        # Add URL to caption
+                        if story_url and story_url not in caption:
+                            if len(caption) + len(story_url) + 4 <= 280:
+                                caption = f"{caption}\n\n{story_url}"
+                            else:
+                                max_len = 280 - len(story_url) - 7
+                                caption = f"{caption[:max_len]}...\n\n{story_url}"
+
+                        strategy["content"] = caption
+                        strategy["image_prompt"] = infographic_visual_prompt
+                        strategy["key_points"] = key_points
+                        strategy["source_url"] = story_url
+                        infographic_generated = True
+                        content_generated = True
+                        logger.info(f"Infographic strategy ready: {infographic_visual_prompt[:50]}...")
+
             except Exception as e:
-                logger.error(f"Caption generation failed: {e}")
-                return None
+                logger.warning(f"Infographic generation failed: {e} - falling back to text")
 
-            # Add URL to caption
-            if story_url and story_url not in caption:
-                if len(caption) + len(story_url) + 4 <= 280:
-                    caption = f"{caption}\n\n{story_url}"
-                else:
-                    max_len = 280 - len(story_url) - 7
-                    caption = f"{caption[:max_len]}...\n\n{story_url}"
+            # Fall back to text if infographic generation failed
+            if not infographic_generated:
+                logger.info(f"📝 Falling back to text post for: {topic}")
+                post_type = "text"
+                strategy["type"] = "text"
+                strategy["fallback_from"] = "infographic"
 
-            strategy["content"] = caption
-            strategy["image_prompt"] = infographic_visual_prompt
-            strategy["key_points"] = key_points
-            strategy["source_url"] = story_url
-            logger.info(f"Infographic strategy ready: {infographic_visual_prompt[:50]}...")
-
-        else:
+        # Handle text generation (either direct or as fallback from meme/infographic)
+        if post_type == "text":
             # Generate text post - dry, cynical style
             logger.info(f"Generating text post for: {topic}")
 
