@@ -31,13 +31,13 @@ steps:
           gcloud run jobs update $_JOB_NAME \
             --image $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/$_IMAGE_NAME:$COMMIT_SHA \
             --region $_REGION \
-            --service-account tech-influencer-sa@$PROJECT_ID.iam.gserviceaccount.com \
+            --service-account phantom-influencer-sa@$PROJECT_ID.iam.gserviceaccount.com \
             --set-env-vars PROJECT_ID=$PROJECT_ID,REGION=$_REGION,BUDGET_MODE=$_BUDGET_MODE
         else
           gcloud run jobs create $_JOB_NAME \
             --image $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/$_IMAGE_NAME:$COMMIT_SHA \
             --region $_REGION \
-            --service-account tech-influencer-sa@$PROJECT_ID.iam.gserviceaccount.com \
+            --service-account phantom-influencer-sa@$PROJECT_ID.iam.gserviceaccount.com \
             --set-env-vars PROJECT_ID=$PROJECT_ID,REGION=$_REGION,BUDGET_MODE=$_BUDGET_MODE \
             --max-retries 1 \
             --task-timeout 10m
@@ -46,9 +46,9 @@ steps:
 
 substitutions:
   _REGION: us-central1
-  _REPO_NAME: tech-influencer-repo
-  _IMAGE_NAME: tech-influencer-agent
-  _JOB_NAME: tech-influencer-job
+  _REPO_NAME: phantom-repo
+  _IMAGE_NAME: phantom-influencer
+  _JOB_NAME: phantom-influencer-job
   _BUDGET_MODE: "False"
 
 options:
