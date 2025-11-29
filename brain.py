@@ -1361,37 +1361,56 @@ Does it relate to actual topic "{topic}"? Are all claims real?
             # If validation itself fails, REJECT to be safe (don't post potentially bad content)
             return {'valid': False, 'reason': f"Validation system error, rejecting for safety: {e}"}
 
+    # Imagen models to try (in order of preference)
+    # See: https://cloud.google.com/vertex-ai/generative-ai/docs/image/generate-images
+    IMAGEN_MODELS = [
+        "imagen-4.0-fast-generate-001",  # Imagen 4 Fast - newest, best latency
+        "imagen-4.0-generate-001",       # Imagen 4 - high quality
+        "imagen-3.0-fast-generate-001",  # Imagen 3 Fast - fallback
+        "imagen-3.0-generate-001",       # Imagen 3 - fallback
+    ]
+
     def generate_image(self, prompt: str) -> str:
         """
-        Generates an image using Imagen 3 Fast and saves it to a temp file.
+        Generates an image using Imagen (tries 4.0 first, falls back to 3.0).
         Returns the path to the saved image.
         """
-        logger.info(f"Generating image for: {prompt}")
-        try:
-            # Switch to Fast model for speed
-            model = ImageGenerationModel.from_pretrained("imagen-3.0-fast-generate-001")
-            images = model.generate_images(
-                prompt=prompt,
-                number_of_images=1,
-                aspect_ratio="16:9",
-                safety_filter_level="block_some",
-                person_generation="allow_adult"
-            )
-            
-            if not images:
-                raise ValueError("No images generated")
-                
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
-                output_path = tmp_file.name
-                
-            images[0].save(location=output_path, include_generation_parameters=False)
-            logger.info(f"Image saved to {output_path}")
-            return output_path
+        logger.info(f"Generating image for: {prompt[:80]}...")
 
-        except Exception as e:
-            logger.error(f"Imagen generation failed: {e}")
-            raise
+        # Try each model until one works
+        last_error = None
+        for model_name in self.IMAGEN_MODELS:
+            try:
+                logger.info(f"Trying Imagen model: {model_name}")
+                model = ImageGenerationModel.from_pretrained(model_name)
+                images = model.generate_images(
+                    prompt=prompt,
+                    number_of_images=1,
+                    aspect_ratio="16:9",
+                    safety_filter_level="block_medium_and_above",
+                    person_generation="allow_adult"
+                )
+
+                if not images:
+                    logger.warning(f"{model_name} returned no images, trying next model")
+                    continue
+
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
+                    output_path = tmp_file.name
+
+                images[0].save(location=output_path, include_generation_parameters=False)
+                logger.info(f"✓ Image generated with {model_name}, saved to {output_path}")
+                return output_path
+
+            except Exception as e:
+                last_error = e
+                logger.warning(f"✗ {model_name} failed: {e}")
+                continue
+
+        # All models failed
+        logger.error(f"All Imagen models failed. Last error: {last_error}")
+        raise RuntimeError(f"Image generation failed with all models. Last error: {last_error}")
 
     def _get_trending_insights(self, category: str = 'ai') -> dict:
         """

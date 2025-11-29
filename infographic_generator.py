@@ -11,8 +11,18 @@ class InfographicGenerator:
     Creates visually appealing explanatory graphics for tech topics.
     """
 
+    # Imagen models to try (in order of preference)
+    # See: https://cloud.google.com/vertex-ai/generative-ai/docs/image/generate-images
+    IMAGEN_MODELS = [
+        "imagen-4.0-fast-generate-001",  # Imagen 4 Fast - newest, best latency
+        "imagen-4.0-generate-001",       # Imagen 4 - high quality
+        "imagen-3.0-fast-generate-001",  # Imagen 3 Fast - fallback
+        "imagen-3.0-generate-001",       # Imagen 3 - fallback
+    ]
+
     def __init__(self):
         self.model = None
+        self.model_name = None
         self._init_model()
 
         # Infographic style templates
@@ -55,13 +65,18 @@ class InfographicGenerator:
         }
 
     def _init_model(self):
-        """Initialize Imagen model."""
-        try:
-            self.model = ImageGenerationModel.from_pretrained("imagen-3.0-fast-generate-001")
-            logger.info("Imagen 3.0 Fast model initialized for infographics")
-        except Exception as e:
-            logger.error(f"Failed to initialize Imagen model: {e}")
-            raise
+        """Initialize Imagen model with fallback to older versions."""
+        for model_name in self.IMAGEN_MODELS:
+            try:
+                self.model = ImageGenerationModel.from_pretrained(model_name)
+                self.model_name = model_name
+                logger.info(f"✓ Imagen model initialized: {model_name}")
+                return
+            except Exception as e:
+                logger.warning(f"✗ Failed to initialize {model_name}: {e}")
+                continue
+
+        raise RuntimeError(f"Failed to initialize any Imagen model. Tried: {self.IMAGEN_MODELS}")
 
     def select_style(self, topic: str, context: str = "") -> str:
         """
@@ -152,7 +167,7 @@ Do NOT include:
                 prompt=prompt,
                 number_of_images=1,
                 aspect_ratio="16:9",
-                safety_filter_level="block_some",
+                safety_filter_level="block_medium_and_above",  # Per docs: block_some is deprecated
                 person_generation="dont_allow"  # Infographics shouldn't need people
             )
 
