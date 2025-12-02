@@ -1757,24 +1757,20 @@ Does it relate to actual topic "{topic}"? Are all claims real?
                 )
                 logger.info(f"Video prompt ready: {video_prompt[:80]}...")
             else:
-                # No researcher - use PURE ART fallbacks (NO tech, NO news connection)
+                # No researcher - generate PURE ART dynamically from seeds
                 import random
-                cinematic_fallbacks = [
-                    # Abstract/Geometric
-                    "Slow dolly through infinite floating glass shards, each catching light differently, prismatic rainbows scattered everywhere, dust particles suspended in volumetric beams, ethereal and dreamlike, anamorphic lens",
-                    "Camera orbits a massive chrome sphere suspended in void, surface rippling like liquid mercury, reflections of unseen worlds, dramatic rim lighting, shallow depth of field",
-                    # Nature/Organic
-                    "Macro lens exploring dewdrops on spider silk at golden hour, light refracting into tiny rainbows, silk swaying gently, bokeh of morning forest behind, intimate and meditative",
-                    "Underwater ballet of bioluminescent jellyfish, tendrils trailing light through dark ocean, camera glides between them, particles floating like stars, serene and otherworldly",
-                    # Surreal/Dreamlike
-                    "Endless staircase ascending into clouds, impossible architecture in style of Escher, warm golden light streaming through gaps, figure climbing in silhouette, dreamlike atmosphere",
-                    "Giant clock face melting Dali-style over desert landscape, sand flowing like water around it, long shadows at sunset, time-lapse clouds, surreal and contemplative",
-                    # Cosmic/Scale
-                    "Camera pulls back from single grain of sand revealing entire beach, continues pulling back showing coastline then planet then solar system, sense of infinite scale, orchestral feeling",
-                    "Aurora borealis over frozen lake, ribbons of green light reflecting perfectly in still water, timelapse stars wheeling overhead, lone figure watching, awe and wonder",
-                ]
-                video_prompt = random.choice(cinematic_fallbacks)
-                logger.info(f"Using pure art fallback prompt")
+                cameras = ["slow dolly", "orbiting shot", "macro close-up", "drone ascending", "tracking shot", "floating camera", "timelapse"]
+                subjects = ["light through water", "floating particles", "liquid metal", "silk in wind", "ink in water", "smoke trails", "bioluminescence", "aurora lights", "molten glass", "petals falling"]
+                styles = ["Impressionism", "Surrealism", "Minimalism", "Japanese Zen", "Baroque lighting", "Nordic noir"]
+                moods = ["ethereal and dreamlike", "serene and meditative", "awe-inspiring", "hypnotic", "mysterious"]
+
+                camera = random.choice(cameras)
+                subject = random.choice(subjects)
+                style = random.choice(styles)
+                mood = random.choice(moods)
+
+                video_prompt = f"{camera.capitalize()} capturing {subject}, inspired by {style}, {mood}, volumetric lighting, shallow depth of field, cinematic"
+                logger.info(f"Using dynamic art fallback prompt")
 
         if post_type == "video":
 
@@ -1809,18 +1805,12 @@ CAPTION:"""
                 logger.warning("Caption too short or empty - skipping")
                 return None
 
-            # Add URL to caption if available
-            if story_url and story_url not in caption:
-                if len(caption) + len(story_url) + 4 <= 280:
-                    caption = f"{caption}\n\n{story_url}"
-                else:
-                    max_len = 280 - len(story_url) - 7
-                    caption = f"{caption[:max_len]}...\n\n{story_url}"
-
+            # VIDEO posts are pure art - NO URLs, just caption
+            # The video is eye candy, not news delivery
             strategy["content"] = caption
             strategy["video_prompt"] = video_prompt
-            strategy["source_url"] = story_url
-            logger.info(f"Video strategy ready: {caption[:50]}...")
+            # No source_url for video posts - they're art, not news links
+            logger.info(f"Video strategy ready (no URL): {caption[:50]}...")
 
         elif post_type == "image":
             # Generate Image Prompt and Tweet Text with FULL article context

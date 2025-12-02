@@ -559,47 +559,75 @@ SUGGESTED_CAPTION: <caption or N/A>
 
     def generate_video_prompt(self, topic: str, context: str, style_notes: str) -> Optional[str]:
         """
-        Generate PURE ART video prompts. ZERO connection to news/topic.
-        The tweet has the news context - the video is just beautiful eye candy to stop the scroll.
+        Generate PURE ART video prompts dynamically using AI.
+        ZERO connection to news/topic - the tweet has the news, video is eye candy.
 
-        No AI call needed - curated artistic prompts that always work with Veo 3.
+        Uses random artistic seeds (movements, techniques, subjects) for variety.
         """
-        # PURE ART prompts - handcrafted, no topic connection, just stunning visuals
-        art_prompts = [
-            # Abstract/Geometric
-            "Slow dolly through infinite floating glass shards, each catching light differently, prismatic rainbows scattered everywhere, dust particles suspended in volumetric beams, ethereal and dreamlike, anamorphic lens",
-            "Camera orbits a massive chrome sphere suspended in void, surface rippling like liquid mercury, reflections of unseen worlds, dramatic rim lighting, shallow depth of field",
-            "Tracking shot through a forest of glowing crystal pillars, bioluminescent fog rolling between them, camera weaves through structures, otherworldly atmosphere, cinematic",
-            "Slow push through endless tunnel of rotating geometric shapes, each ring a different glowing color, hypnotic and mesmerizing, symmetrical composition, deep perspective",
-
-            # Nature/Organic
-            "Extreme macro of ink dropping into water, blooming into organic fractal shapes, swirling colors mixing in slow motion, backlit creating silhouettes, hypnotic",
-            "Drone ascending through layers of clouds at golden hour, breaking through to reveal endless cotton sea below, god rays streaming, majestic, 4K cinematic",
-            "Close-up of flame dancing in darkness, slow motion revealing hidden shapes and colors, ember particles floating upward, intimate and primal, shallow depth of field",
-            "Underwater camera gliding through bioluminescent jellyfish, tentacles trailing light, deep blue void, particles drifting like stars, serene and alien",
-
-            # Surreal/Dreamlike
-            "Slow push through doorway into infinite mirrored room, reflections creating kaleidoscope effect, warm amber lighting, reality bending, Kubrick composition",
-            "Camera floats through underwater cathedral of light, caustics dancing on ancient stone, particles drifting like snow, serene and mysterious, anamorphic flares",
-            "Timelapse of shadows moving across minimalist white room, geometric patterns evolving, meditative and hypnotic, clean aesthetic, golden hour light",
-            "Dolly through foggy forest at dawn, shafts of light piercing canopy, mist swirling around ancient trees, magical atmosphere, cinematic color grading",
-
-            # Cosmic/Scale
-            "Slow zoom out from single glowing particle to reveal galaxy of millions, each pulsing with inner light, vast scale, awe-inspiring, deep space atmosphere",
-            "Camera descends through layers of translucent colored veils, each layer revealing new depth, journey into abstract unknown, dreamlike and infinite",
-            "Tracking along endless horizon where sky meets mirror-flat water, lone figure silhouetted in distance, minimalist and profound, golden hour",
-            "Orbiting shot around massive floating monolith, surface covered in shifting patterns, clouds drifting past, sense of ancient mystery, dramatic lighting",
-
-            # Texture/Material
-            "Extreme close-up of liquid metal flowing over black surface, chrome catching neon reflections, satisfying and mesmerizing, macro lens detail, ASMR visual",
-            "Slow motion of silk fabric billowing in invisible wind, light passing through translucent material, graceful and elegant, soft diffused lighting",
-            "Camera explores surface of soap bubble, iridescent colors shifting and swirling, macro revealing hidden rainbow universe, fragile beauty, shallow DOF",
-            "Molten glass being shaped in slow motion, glowing orange transforming into form, sparks flying, dramatic contrast, artisan craftsmanship, cinematic",
+        # Random artistic elements to seed the AI generation
+        art_movements = [
+            "Impressionism", "Surrealism", "Abstract Expressionism", "Minimalism",
+            "Art Nouveau", "Baroque", "Romanticism", "Futurism", "Cubism",
+            "Japanese Zen aesthetics", "Nordic noir", "Wabi-sabi"
         ]
 
-        video_prompt = random.choice(art_prompts)
-        logger.info(f"Selected art prompt: {video_prompt[:60]}...")
-        return video_prompt
+        camera_techniques = [
+            "slow dolly push", "smooth orbiting shot", "macro close-up", "drone ascending",
+            "tracking shot", "slow zoom out", "floating camera", "timelapse",
+            "underwater glide", "first-person drift", "crane descent", "360 rotation"
+        ]
+
+        visual_subjects = [
+            "light through water", "floating particles", "liquid metal", "glass reflections",
+            "silk in wind", "ink in water", "smoke trails", "crystal formations",
+            "bioluminescence", "aurora lights", "soap bubbles", "molten glass",
+            "dew drops", "flames dancing", "sand dunes", "fog rolling", "clouds forming",
+            "ice melting", "petals falling", "feathers floating", "rain on windows"
+        ]
+
+        moods = [
+            "ethereal and dreamlike", "serene and meditative", "awe-inspiring",
+            "intimate and contemplative", "mysterious and ancient", "hypnotic",
+            "majestic and vast", "delicate and fragile", "powerful and primal"
+        ]
+
+        # Pick random seeds
+        movement = random.choice(art_movements)
+        camera = random.choice(camera_techniques)
+        subject = random.choice(visual_subjects)
+        mood = random.choice(moods)
+
+        # AI generates the actual prompt based on these seeds
+        generation_prompt = f"""Create a VIDEO PROMPT for AI video generation (Veo 3).
+
+ARTISTIC INSPIRATION:
+- Style: {movement}
+- Camera: {camera}
+- Subject: {subject}
+- Mood: {mood}
+
+REQUIREMENTS:
+- Pure visual art, NO logos, NO text, NO tech imagery, NO people's faces
+- Include specific camera movement and lighting details
+- 100-200 characters, single sentence
+- Cinematic, visually stunning, scroll-stopping
+
+Output ONLY the video prompt, nothing else:"""
+
+        try:
+            response = self.generate(generation_prompt)
+            video_prompt = clean_ai_prompt(response, min_length=50)
+
+            if video_prompt:
+                logger.info(f"AI generated art prompt: {video_prompt[:60]}...")
+                return video_prompt
+        except Exception as e:
+            logger.warning(f"AI video prompt generation failed: {e}")
+
+        # Fallback: construct from seeds directly
+        fallback = f"{camera.capitalize()} capturing {subject}, inspired by {movement}, {mood}, volumetric lighting, shallow depth of field, cinematic"
+        logger.info(f"Using seed-based fallback prompt: {fallback[:60]}...")
+        return fallback
 
     def generate_infographic_prompt(self, topic: str, context: str, key_points: List[str]) -> Optional[str]:
         """
