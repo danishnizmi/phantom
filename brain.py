@@ -578,6 +578,47 @@ class AgentBrain:
         logger.info(result['context'])
         return result
 
+    def _should_ensure_daily_video(self, video_count_today: int) -> bool:
+        """
+        Determines if we should force video generation to ensure at least 1 video per day.
+        Returns True if:
+        - No video has been posted today
+        - Current time is in afternoon or evening window (optimal video posting times)
+
+        This ensures we don't end the day without generating a video.
+        """
+        import datetime
+        import pytz
+
+        # Already have a video today
+        if video_count_today >= 1:
+            return False
+
+        try:
+            tz = pytz.timezone(Config.TIMEZONE)
+            now = datetime.datetime.now(tz)
+            hour = now.hour
+
+            # Video posting windows: afternoon (14-17) and evening (18-21)
+            # These are optimal times for engaging video content
+            video_windows = [(14, 17), (18, 21)]
+
+            for start, end in video_windows:
+                if start <= hour < end:
+                    logger.info(f"🎬 Video window active ({start}:00-{end}:00) and no video today - ensuring video")
+                    return True
+
+            # Late night fallback: if it's 21:00+ and still no video, force one
+            if hour >= 21 and video_count_today == 0:
+                logger.info(f"🎬 Late in day (hour {hour}) with no video - ensuring video before day ends")
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.warning(f"Could not check video scheduling: {e}")
+            return False
+
     def _check_media_budget(self, desired_type: str) -> tuple:
         """
         Checks if we have budget for the desired media type.
@@ -776,6 +817,62 @@ Write the caption:"""
             if source_url:
                 return f"{base}\n\n{source_url}"
             return base
+
+    def _clean_tweet_response(self, response: str) -> str:
+        """
+        Cleans AI response to extract just the tweet content.
+        Removes preamble, options formatting, and markdown.
+
+        Handles responses like:
+        - "Here are a few options...\n\n**Option 1:**\n\n\"Actual tweet\""
+        - "**Option 1 (Style 1):**\n\n\"Actual tweet\""
+        - "TWEET: Actual tweet"
+        """
+        if not response:
+            return response
+
+        text = response.strip()
+
+        # Remove common preamble patterns
+        preamble_patterns = [
+            r'^Here\s+(are|is).*?(?:options?|tweets?|responses?).*?[\n:]+',
+            r'^Based on.*?[\n:]+',
+            r'^I\'ll.*?[\n:]+',
+            r'^Let me.*?[\n:]+',
+        ]
+
+        for pattern in preamble_patterns:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.DOTALL)
+
+        # Remove "Option X" formatting (e.g., "**Option 1 (Style 1):**")
+        text = re.sub(r'\*{0,2}Option\s*\d+.*?\*{0,2}[\s:]*', '', text, flags=re.IGNORECASE)
+
+        # Remove other markdown headers and formatting
+        text = re.sub(r'\*{2,}[^*]+\*{2,}[\s:]*', '', text)  # **Header:**
+        text = text.replace('**', '').replace('*', '')  # Bold/italic
+
+        # Extract content from quotes if present (the actual tweet is often quoted)
+        quote_match = re.search(r'["\u201c]([^"\u201d]+)["\u201d]', text)
+        if quote_match and len(quote_match.group(1)) > 30:
+            text = quote_match.group(1)
+
+        # Clean up any remaining artifacts
+        text = re.sub(r'^[\s\n:]+', '', text)  # Leading whitespace/colons
+        text = re.sub(r'[\s\n]+$', '', text)   # Trailing whitespace
+
+        # If we still have multiple lines, take the first substantive one
+        lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) > 20]
+        if lines:
+            # Find the line that looks most like a tweet (has URL or is right length)
+            for line in lines:
+                if 'http' in line or (40 < len(line) < 300):
+                    text = line
+                    break
+            else:
+                text = lines[0]
+
+        logger.debug(f"Cleaned tweet response: '{text[:100]}...'")
+        return text.strip()
 
     def _extract_urls(self, text: str) -> list:
         """Extracts all URLs from text."""
@@ -1429,16 +1526,20 @@ Does it relate to actual topic "{topic}"? Are all claims real?
             logger.warning(f"Could not get trending insights: {e}")
             return {'has_data': False}
 
-    def get_strategy(self):
+    def get_strategy(self, force_video: bool = False):
         """
         Decides on the content strategy: Text (HN Style), Video (Veo), or Image (Imagen).
         Returns a dict with 'type', 'content', 'topic', and optional 'video_prompt'/'image_path'.
+
+        Args:
+            force_video: If True, forces VIDEO format regardless of AI decision or budget.
+                        Useful for manual testing or ensuring daily video generation.
         """
         max_retries = 3
 
         for attempt in range(max_retries):
             try:
-                return self._generate_strategy_with_validation(attempt)
+                return self._generate_strategy_with_validation(attempt, force_video=force_video)
             except ValueError as e:
                 if "validation failed" in str(e).lower() and attempt < max_retries - 1:
                     logger.warning(f"Attempt {attempt + 1} failed validation: {e}")
@@ -1449,10 +1550,14 @@ Does it relate to actual topic "{topic}"? Are all claims real?
 
         raise RuntimeError("Failed to generate valid strategy after all retries")
 
-    def _generate_strategy_with_validation(self, attempt: int = 0) -> dict:
+    def _generate_strategy_with_validation(self, attempt: int = 0, force_video: bool = False) -> dict:
         """
         Internal method to generate and validate a strategy.
         OPTIMIZED: Combined topic selection + evaluation in ONE AI call.
+
+        Args:
+            attempt: Current retry attempt number
+            force_video: If True, forces VIDEO format regardless of AI decision or budget.
         """
         # Get preferred categories based on recent post history
         preferred_categories = self._get_preferred_categories()
@@ -1511,7 +1616,12 @@ Does it relate to actual topic "{topic}"? Are all claims real?
         image_count = usage.get('image', 0) + usage.get('infographic', 0) + usage.get('meme', 0)
         video_count = usage.get('video', 0)
 
-        if Config.BUDGET_MODE:
+        # FORCE_VIDEO: Override all other format decisions
+        if force_video:
+            logger.info(f"🎬 FORCE_VIDEO: Generating video (ignoring normal budget/AI decision)")
+            post_type = "video"
+            research_result = {'format': 'VIDEO', 'style_notes': '', 'reasoning': 'FORCE_VIDEO override'}
+        elif Config.BUDGET_MODE:
             logger.info("BUDGET_MODE enabled, using text-only format")
             post_type = "text"
             research_result = {'format': 'TEXT', 'style_notes': '', 'reasoning': 'Budget mode'}
@@ -1521,33 +1631,42 @@ Does it relate to actual topic "{topic}"? Are all claims real?
             post_type = "text"
             research_result = {'format': 'TEXT', 'style_notes': '', 'reasoning': 'Budget exhausted'}
         else:
-            # USE AI's format hint from combined call (saves another API call!)
-            raw_hint = ai_eval.get('format_hint', 'TEXT').upper()
-            # Extract just the format type (AI sometimes adds descriptions like "IMAGE (screenshot...)")
-            format_hint = raw_hint.split()[0] if raw_hint else 'TEXT'
-            # Normalize to valid types only
-            valid_formats = {'VIDEO', 'MEME', 'INFOGRAPHIC', 'TEXT'}
-            if format_hint not in valid_formats:
-                # IMAGE → MEME (we fetch images via meme sources)
-                format_hint = 'MEME' if 'IMAGE' in raw_hint else 'TEXT'
+            # Check if we should force video to ensure daily generation
+            # If no video today and it's afternoon/evening (good video time), prioritize video
+            should_ensure_video = self._should_ensure_daily_video(video_count)
 
-            # AI chose freely - just respect budget limits
-            # If AI chose VIDEO but budget exhausted, fall back gracefully
-            if format_hint == 'VIDEO' and video_count >= 1:
-                logger.info(f"📋 AI chose VIDEO but budget exhausted ({video_count}/1). Falling back.")
-                format_hint = 'MEME' if image_count < 5 else 'TEXT'
-            # If AI chose image-based format but budget exhausted
-            if format_hint in ['MEME', 'INFOGRAPHIC'] and image_count >= 5:
-                logger.info(f"📋 AI chose {format_hint} but image budget exhausted ({image_count}/5). Using TEXT.")
-                format_hint = 'TEXT'
+            if should_ensure_video:
+                logger.info(f"🎬 No video today yet - prioritizing VIDEO for daily generation")
+                post_type = "video"
+                research_result = {'format': 'VIDEO', 'style_notes': '', 'reasoning': 'Daily video guarantee'}
+            else:
+                # USE AI's format hint from combined call (saves another API call!)
+                raw_hint = ai_eval.get('format_hint', 'TEXT').upper()
+                # Extract just the format type (AI sometimes adds descriptions like "IMAGE (screenshot...)")
+                format_hint = raw_hint.split()[0] if raw_hint else 'TEXT'
+                # Normalize to valid types only
+                valid_formats = {'VIDEO', 'MEME', 'INFOGRAPHIC', 'TEXT'}
+                if format_hint not in valid_formats:
+                    # IMAGE → MEME (we fetch images via meme sources)
+                    format_hint = 'MEME' if 'IMAGE' in raw_hint else 'TEXT'
 
-            post_type = format_hint.lower()
-            research_result = {
-                'format': format_hint,
-                'style_notes': ai_eval.get('style_tip', ''),
-                'reasoning': ai_eval.get('reason', 'AI decision')
-            }
-            logger.info(f"📋 AI chose format: {format_hint}")
+                # AI chose freely - just respect budget limits
+                # If AI chose VIDEO but budget exhausted, fall back gracefully
+                if format_hint == 'VIDEO' and video_count >= 1:
+                    logger.info(f"📋 AI chose VIDEO but budget exhausted ({video_count}/1). Falling back.")
+                    format_hint = 'MEME' if image_count < 5 else 'TEXT'
+                # If AI chose image-based format but budget exhausted
+                if format_hint in ['MEME', 'INFOGRAPHIC'] and image_count >= 5:
+                    logger.info(f"📋 AI chose {format_hint} but image budget exhausted ({image_count}/5). Using TEXT.")
+                    format_hint = 'TEXT'
+
+                post_type = format_hint.lower()
+                research_result = {
+                    'format': format_hint,
+                    'style_notes': ai_eval.get('style_tip', ''),
+                    'reasoning': ai_eval.get('reason', 'AI decision')
+                }
+                logger.info(f"📋 AI chose format: {format_hint}")
 
         logger.info(f"Selected post type: {post_type}")
 
@@ -1966,6 +2085,10 @@ TWEET:
             try:
                 response = self._generate_with_fallback(post_prompt)
                 tweet = response.strip()
+
+                # CRITICAL: Clean up AI response that includes instructions/options
+                # The AI sometimes outputs preamble like "Here are options..." or "**Option 1:**"
+                tweet = self._clean_tweet_response(tweet)
 
                 # If we have a URL, ensure it's in the tweet
                 if story_url and story_url not in tweet:

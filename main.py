@@ -11,6 +11,8 @@ from config import Config, get_secret
 
 # Check for scheduling mode
 FORCE_POST = os.getenv("FORCE_POST", "false").lower() == "true"
+# Force video generation (bypasses format selection, useful for manual testing)
+FORCE_VIDEO = os.getenv("FORCE_VIDEO", "false").lower() == "true"
 
 # Configure logging - will be enhanced with structured logging below
 logging.basicConfig(
@@ -123,7 +125,10 @@ def main():
 
     # 3. Get Strategy (may return None if no quality content available)
     try:
-        strategy = brain.get_strategy()
+        # Pass FORCE_VIDEO flag to force video generation
+        if FORCE_VIDEO:
+            logger.info("🎬 FORCE_VIDEO enabled - will generate video regardless of budget/AI decision")
+        strategy = brain.get_strategy(force_video=FORCE_VIDEO)
 
         if strategy is None:
             logger.info("No quality content available - skipping this post cycle")
