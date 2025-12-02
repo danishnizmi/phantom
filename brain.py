@@ -1774,18 +1774,19 @@ Does it relate to actual topic "{topic}"? Are all claims real?
 
         if post_type == "video":
 
-            # Generate caption - dry, cynical style
-            caption_prompt = f"""{BIG_BOSS_PERSONA}
+            # Generate caption ABOUT THE VIDEO ITSELF - NOT about news
+            # Video posts are pure art, caption describes the visual
+            caption_prompt = f"""Write a SHORT caption for this art video.
 
-Write a SHORT caption for this video.
-
-TOPIC: {topic}
+VIDEO VISUAL: {video_prompt}
 
 Requirements:
-- 60-100 characters
-- Dry wit or cynical observation
+- Caption is ABOUT THE VIDEO ITSELF (the visual, the mood, the feeling)
+- NO news, NO topics, NO external references
+- Poetic, artistic, or contemplative tone
+- 30-80 characters MAX
 - NO hashtags, NO emojis
-- Creates curiosity
+- Examples: "Hypnotic.", "Time dissolves.", "Just breathe.", "Lost in this."
 
 CAPTION:"""
 
@@ -1794,23 +1795,27 @@ CAPTION:"""
                 # Clean AI response - remove any preamble/formatting
                 caption = self._clean_tweet_response(raw_caption)
                 caption = caption.strip().strip('"')
-                if len(caption) > 150:
-                    caption = caption[:147] + "..."
+                if len(caption) > 100:
+                    caption = caption[:97] + "..."
             except Exception as e:
                 logger.error(f"Caption generation failed: {e}")
-                return None  # Don't post garbage
+                # Fallback artistic captions
+                import random
+                fallback_captions = [
+                    "Mesmerizing.", "Lost in this.", "Hypnotic.", "Just watch.",
+                    "Time stops.", "Pure flow.", "Breathe.", "Visual therapy."
+                ]
+                caption = random.choice(fallback_captions)
 
             # Validate caption makes sense
-            if len(caption) < 20 or not caption:
-                logger.warning("Caption too short or empty - skipping")
-                return None
+            if len(caption) < 5 or not caption:
+                caption = "Mesmerizing."
 
-            # VIDEO posts are pure art - NO URLs, just caption
-            # The video is eye candy, not news delivery
+            # VIDEO posts are pure art - NO URLs, NO news, just visual + caption
             strategy["content"] = caption
             strategy["video_prompt"] = video_prompt
-            # No source_url for video posts - they're art, not news links
-            logger.info(f"Video strategy ready (no URL): {caption[:50]}...")
+            strategy["topic"] = "Art video"  # Override topic - it's not news
+            logger.info(f"Video strategy ready (pure art): {caption}")
 
         elif post_type == "image":
             # Generate Image Prompt and Tweet Text with FULL article context
