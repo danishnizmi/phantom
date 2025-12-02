@@ -580,17 +580,21 @@ class AgentBrain:
 
     def _should_ensure_daily_video(self, video_count_today: int) -> bool:
         """
-        Determines if we should force video generation to ensure at least 1 video per day.
+        Determines if we should prioritize video generation to ensure at least 1 video per day.
         Returns True if:
         - No video has been posted today
         - Current time is in afternoon or evening window (optimal video posting times)
+        - Random chance succeeds (AI still has some say)
 
-        This ensures we don't end the day without generating a video.
+        This ensures we don't end the day without generating a video while keeping AI in control.
+
+        COST: No API calls, just time check and random.
         """
         import datetime
         import pytz
+        import random
 
-        # Already have a video today
+        # Already have a video today - AI decides freely
         if video_count_today >= 1:
             return False
 
@@ -599,16 +603,25 @@ class AgentBrain:
             now = datetime.datetime.now(tz)
             hour = now.hour
 
-            # Video posting windows: afternoon (14-17) and evening (18-21)
-            # These are optimal times for engaging video content
-            video_windows = [(14, 17), (18, 21)]
+            # Video posting windows with probability weights
+            # Earlier = lower probability (AI has more say)
+            # Later = higher probability (ensures video gets made)
+            video_windows = [
+                (14, 17, 0.6),   # Afternoon: 60% chance to force video
+                (18, 21, 0.8),   # Evening: 80% chance to force video
+            ]
 
-            for start, end in video_windows:
+            for start, end, probability in video_windows:
                 if start <= hour < end:
-                    logger.info(f"🎬 Video window active ({start}:00-{end}:00) and no video today - ensuring video")
-                    return True
+                    roll = random.random()
+                    if roll < probability:
+                        logger.info(f"🎬 Video window ({start}:00-{end}:00), roll {roll:.2f} < {probability} - prioritizing video")
+                        return True
+                    else:
+                        logger.info(f"🎬 Video window active but roll {roll:.2f} >= {probability} - letting AI decide")
+                        return False
 
-            # Late night fallback: if it's 21:00+ and still no video, force one
+            # Late night fallback: if it's 21:00+ and still no video, always force one
             if hour >= 21 and video_count_today == 0:
                 logger.info(f"🎬 Late in day (hour {hour}) with no video - ensuring video before day ends")
                 return True
@@ -821,58 +834,106 @@ Write the caption:"""
     def _clean_tweet_response(self, response: str) -> str:
         """
         Cleans AI response to extract just the tweet content.
-        Removes preamble, options formatting, and markdown.
+        Removes preamble, options formatting, and markdown while preserving URLs.
 
         Handles responses like:
         - "Here are a few options...\n\n**Option 1:**\n\n\"Actual tweet\""
         - "**Option 1 (Style 1):**\n\n\"Actual tweet\""
         - "TWEET: Actual tweet"
+
+        SECURITY: Only performs safe string operations, no code execution.
+        COST: No API calls, pure string processing.
         """
         if not response:
             return response
 
         text = response.strip()
+        original_text = text  # Keep original for fallback
 
-        # Remove common preamble patterns
+        # STEP 1: Extract and preserve URLs before any cleaning
+        url_pattern = r'https?://[^\s<>"{}|\\^`\[\])]+(?:\)[^\s]*)?'
+        urls_found = re.findall(url_pattern, text)
+        url_placeholder_map = {}
+        for i, url in enumerate(urls_found):
+            placeholder = f"__URL_PLACEHOLDER_{i}__"
+            url_placeholder_map[placeholder] = url
+            text = text.replace(url, placeholder, 1)
+
+        # STEP 2: Remove common preamble patterns (AI meta-commentary)
         preamble_patterns = [
-            r'^Here\s+(are|is).*?(?:options?|tweets?|responses?).*?[\n:]+',
+            r'^Here\s+(are|is).*?(?:options?|tweets?|responses?|variations?).*?[\n:]+',
             r'^Based on.*?[\n:]+',
             r'^I\'ll.*?[\n:]+',
             r'^Let me.*?[\n:]+',
+            r'^Sure[,!].*?[\n:]+',
+            r'^Okay[,!].*?[\n:]+',
         ]
 
         for pattern in preamble_patterns:
             text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.DOTALL)
 
-        # Remove "Option X" formatting (e.g., "**Option 1 (Style 1):**")
-        text = re.sub(r'\*{0,2}Option\s*\d+.*?\*{0,2}[\s:]*', '', text, flags=re.IGNORECASE)
+        # STEP 3: Remove "Option X" formatting (e.g., "**Option 1 (Style 1):**")
+        text = re.sub(r'\*{0,2}Option\s*\d+[^:\n]*\*{0,2}[\s:]*', '', text, flags=re.IGNORECASE)
 
-        # Remove other markdown headers and formatting
-        text = re.sub(r'\*{2,}[^*]+\*{2,}[\s:]*', '', text)  # **Header:**
+        # STEP 4: Remove markdown headers and formatting
+        text = re.sub(r'\*{2,}[^*\n]+\*{2,}[\s:]*', '', text)  # **Header:**
         text = text.replace('**', '').replace('*', '')  # Bold/italic
 
-        # Extract content from quotes if present (the actual tweet is often quoted)
-        quote_match = re.search(r'["\u201c]([^"\u201d]+)["\u201d]', text)
-        if quote_match and len(quote_match.group(1)) > 30:
-            text = quote_match.group(1)
+        # STEP 5: Extract content from quotes if present (actual tweet often quoted)
+        # Match both straight quotes and curly quotes
+        quote_patterns = [
+            r'"([^"]+)"',           # "content"
+            r'\u201c([^\u201d]+)\u201d',  # "content"
+        ]
+        for qp in quote_patterns:
+            quote_match = re.search(qp, text)
+            if quote_match and len(quote_match.group(1)) > 30:
+                # Found a substantial quoted section - use it
+                text = quote_match.group(1)
+                break
 
-        # Clean up any remaining artifacts
+        # STEP 6: Clean up any remaining artifacts
         text = re.sub(r'^[\s\n:]+', '', text)  # Leading whitespace/colons
         text = re.sub(r'[\s\n]+$', '', text)   # Trailing whitespace
 
-        # If we still have multiple lines, take the first substantive one
-        lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) > 20]
-        if lines:
-            # Find the line that looks most like a tweet (has URL or is right length)
+        # STEP 7: If multiple lines, find the best tweet-like line
+        lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) > 15]
+        if len(lines) > 1:
+            # Find the line that looks most like a tweet
+            best_line = None
             for line in lines:
-                if 'http' in line or (40 < len(line) < 300):
-                    text = line
+                # Prefer lines with URLs or appropriate length
+                has_url = '__URL_PLACEHOLDER_' in line
+                good_length = 30 < len(line) < 300
+                # Skip lines that look like instructions
+                looks_like_instruction = any(kw in line.lower() for kw in
+                    ['option', 'here is', 'here are', 'example', 'style:'])
+                if (has_url or good_length) and not looks_like_instruction:
+                    best_line = line
                     break
-            else:
+            if best_line:
+                text = best_line
+            elif lines:
                 text = lines[0]
 
-        logger.debug(f"Cleaned tweet response: '{text[:100]}...'")
-        return text.strip()
+        # STEP 8: Restore URLs from placeholders
+        for placeholder, url in url_placeholder_map.items():
+            text = text.replace(placeholder, url)
+
+        # STEP 9: Final validation - ensure we have something useful
+        text = text.strip()
+        if len(text) < 10:
+            # Cleaning went wrong, fall back to extracting from original
+            logger.warning(f"Tweet cleaning produced too-short result, using fallback")
+            # Try to find a URL in original and build minimal tweet
+            if urls_found:
+                text = original_text.split('\n')[-1].strip()
+                # Restore URLs in fallback
+                for placeholder, url in url_placeholder_map.items():
+                    text = text.replace(placeholder, url)
+
+        logger.debug(f"Cleaned tweet: '{text[:80]}...' (from {len(original_text)} chars)")
+        return text
 
     def _extract_urls(self, text: str) -> list:
         """Extracts all URLs from text."""
@@ -1723,7 +1784,10 @@ Requirements:
 CAPTION:"""
 
             try:
-                caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
+                raw_caption = self._generate_with_fallback(caption_prompt)
+                # Clean AI response - remove any preamble/formatting
+                caption = self._clean_tweet_response(raw_caption)
+                caption = caption.strip().strip('"')
                 if len(caption) > 150:
                     caption = caption[:147] + "..."
             except Exception as e:
@@ -1920,7 +1984,10 @@ TOPIC: {topic}
 Requirements: 50-100 chars, dry humor, no hashtags, no emojis.
 
 CAPTION:"""
-                                            caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
+                                            raw_caption = self._generate_with_fallback(caption_prompt)
+                                            # Clean AI response
+                                            caption = self._clean_tweet_response(raw_caption)
+                                            caption = caption.strip().strip('"')
 
                                         break
                                     else:
@@ -2004,7 +2071,10 @@ Requirements: 80-120 chars, informative but casual, no hashtags, no emojis.
 
 CAPTION:"""
 
-                    caption = self._generate_with_fallback(caption_prompt).strip().strip('"')
+                    raw_caption = self._generate_with_fallback(caption_prompt)
+                    # Clean AI response
+                    caption = self._clean_tweet_response(raw_caption)
+                    caption = caption.strip().strip('"')
                     if len(caption) < 20:
                         logger.warning("Caption too short - falling back to text")
                     else:
