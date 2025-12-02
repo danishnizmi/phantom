@@ -559,61 +559,75 @@ SUGGESTED_CAPTION: <caption or N/A>
 
     def generate_video_prompt(self, topic: str, context: str, style_notes: str) -> Optional[str]:
         """
-        Generate a creative video prompt. AI decides the best visual style dynamically.
-        Returns validated prompt or None if can't create good one.
+        Generate PURE ART video prompts dynamically using AI.
+        ZERO connection to news/topic - the tweet has the news, video is eye candy.
+
+        Uses random artistic seeds (movements, techniques, subjects) for variety.
         """
-        # Extract key concepts from topic for better prompts
-        topic_lower = topic.lower()
+        # Random artistic elements to seed the AI generation
+        art_movements = [
+            "Impressionism", "Surrealism", "Abstract Expressionism", "Minimalism",
+            "Art Nouveau", "Baroque", "Romanticism", "Futurism", "Cubism",
+            "Japanese Zen aesthetics", "Nordic noir", "Wabi-sabi"
+        ]
 
-        # Determine visual theme based on topic keywords
-        if any(kw in topic_lower for kw in ['bitcoin', 'crypto', 'blockchain', 'token', 'defi']):
-            theme_hint = "cryptocurrency, digital gold, blockchain networks, neon green data streams"
-        elif any(kw in topic_lower for kw in ['ai', 'artificial', 'gemini', 'gpt', 'model', 'neural']):
-            theme_hint = "artificial intelligence, neural networks, glowing circuits, futuristic technology"
-        elif any(kw in topic_lower for kw in ['stock', 'market', 'invest', 'fund', 'billion']):
-            theme_hint = "financial markets, stock tickers, trading floors, money flow visualization"
-        elif any(kw in topic_lower for kw in ['apple', 'google', 'meta', 'microsoft', 'amazon']):
-            theme_hint = "tech giant headquarters, sleek product design, corporate innovation"
-        else:
-            theme_hint = "technology, innovation, digital transformation, futuristic visualization"
+        camera_techniques = [
+            "slow dolly push", "smooth orbiting shot", "macro close-up", "drone ascending",
+            "tracking shot", "slow zoom out", "floating camera", "timelapse",
+            "underwater glide", "first-person drift", "crane descent", "360 rotation"
+        ]
 
-        prompt = f"""Create a VIDEO PROMPT for an AI video generator (like Veo). Output ONLY the prompt text, nothing else.
+        visual_subjects = [
+            "light through water", "floating particles", "liquid metal", "glass reflections",
+            "silk in wind", "ink in water", "smoke trails", "crystal formations",
+            "bioluminescence", "aurora lights", "soap bubbles", "molten glass",
+            "dew drops", "flames dancing", "sand dunes", "fog rolling", "clouds forming",
+            "ice melting", "petals falling", "feathers floating", "rain on windows"
+        ]
 
-TOPIC: {topic}
-THEME: {theme_hint}
-{f'STYLE DIRECTION: {style_notes}' if style_notes else ''}
+        moods = [
+            "ethereal and dreamlike", "serene and meditative", "awe-inspiring",
+            "intimate and contemplative", "mysterious and ancient", "hypnotic",
+            "majestic and vast", "delicate and fragile", "powerful and primal"
+        ]
 
-Write a cinematic video description (100-150 chars) that includes:
-- A specific visual scene (not abstract concepts)
-- Lighting and color palette
-- Camera movement or visual flow
-- Modern, striking aesthetic
+        # Pick random seeds
+        movement = random.choice(art_movements)
+        camera = random.choice(camera_techniques)
+        subject = random.choice(visual_subjects)
+        mood = random.choice(moods)
 
-EXAMPLE OUTPUTS:
-- "Glowing blockchain network expanding across dark space, neon green data packets flowing between nodes, cinematic zoom out"
-- "Futuristic AI chip pulsing with blue light, neural pathways branching outward, dramatic lens flare, 4K quality"
-- "Stock market holographic display, green numbers rising, trader silhouette watching, cyberpunk city background"
+        # AI generates the actual prompt based on these seeds
+        generation_prompt = f"""Create a VIDEO PROMPT for AI video generation (Veo 3).
 
-YOUR VIDEO PROMPT (just the description, no labels):"""
+ARTISTIC INSPIRATION:
+- Style: {movement}
+- Camera: {camera}
+- Subject: {subject}
+- Mood: {mood}
+
+REQUIREMENTS:
+- Pure visual art, NO logos, NO text, NO tech imagery, NO people's faces
+- Include specific camera movement and lighting details
+- 100-200 characters, single sentence
+- Cinematic, visually stunning, scroll-stopping
+
+Output ONLY the video prompt, nothing else:"""
 
         try:
-            response = self.generate(prompt)
+            response = self.generate(generation_prompt)
+            video_prompt = clean_ai_prompt(response, min_length=50)
 
-            # Use robust cleaning utility
-            video_prompt = clean_ai_prompt(response, min_length=30)
-
-            # If cleaning failed, use themed fallback
-            if not video_prompt:
-                logger.warning(f"AI response invalid, using themed fallback")
-                video_prompt = f"Cinematic visualization of {theme_hint}, dramatic lighting, futuristic aesthetic, 4K quality"
-
-            logger.info(f"Generated video prompt: {video_prompt[:80]}...")
-            return video_prompt
-
+            if video_prompt:
+                logger.info(f"AI generated art prompt: {video_prompt[:60]}...")
+                return video_prompt
         except Exception as e:
-            logger.error(f"Video prompt generation failed: {e}")
-            # Return a reasonable default instead of None
-            return f"Futuristic tech visualization, {theme_hint}, cinematic lighting, dramatic atmosphere"
+            logger.warning(f"AI video prompt generation failed: {e}")
+
+        # Fallback: construct from seeds directly
+        fallback = f"{camera.capitalize()} capturing {subject}, inspired by {movement}, {mood}, volumetric lighting, shallow depth of field, cinematic"
+        logger.info(f"Using seed-based fallback prompt: {fallback[:60]}...")
+        return fallback
 
     def generate_infographic_prompt(self, topic: str, context: str, key_points: List[str]) -> Optional[str]:
         """

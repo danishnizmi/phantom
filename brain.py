@@ -1757,14 +1757,20 @@ Does it relate to actual topic "{topic}"? Are all claims real?
                 )
                 logger.info(f"Video prompt ready: {video_prompt[:80]}...")
             else:
-                # No researcher - generate topic-based prompt
-                topic_lower = topic.lower()
-                if any(kw in topic_lower for kw in ['bitcoin', 'crypto', 'blockchain', 'token']):
-                    video_prompt = f"Glowing blockchain network, neon green data streams, cryptocurrency visualization, cinematic, 4K"
-                elif any(kw in topic_lower for kw in ['ai', 'artificial', 'gemini', 'gpt']):
-                    video_prompt = f"Futuristic AI neural network, glowing circuits, data processing visualization, cinematic lighting"
-                else:
-                    video_prompt = f"Futuristic tech visualization about {topic[:40]}, neon lights, data streams, cinematic 4K"
+                # No researcher - generate PURE ART dynamically from seeds
+                import random
+                cameras = ["slow dolly", "orbiting shot", "macro close-up", "drone ascending", "tracking shot", "floating camera", "timelapse"]
+                subjects = ["light through water", "floating particles", "liquid metal", "silk in wind", "ink in water", "smoke trails", "bioluminescence", "aurora lights", "molten glass", "petals falling"]
+                styles = ["Impressionism", "Surrealism", "Minimalism", "Japanese Zen", "Baroque lighting", "Nordic noir"]
+                moods = ["ethereal and dreamlike", "serene and meditative", "awe-inspiring", "hypnotic", "mysterious"]
+
+                camera = random.choice(cameras)
+                subject = random.choice(subjects)
+                style = random.choice(styles)
+                mood = random.choice(moods)
+
+                video_prompt = f"{camera.capitalize()} capturing {subject}, inspired by {style}, {mood}, volumetric lighting, shallow depth of field, cinematic"
+                logger.info(f"Using dynamic art fallback prompt")
 
         if post_type == "video":
 
@@ -1799,18 +1805,12 @@ CAPTION:"""
                 logger.warning("Caption too short or empty - skipping")
                 return None
 
-            # Add URL to caption if available
-            if story_url and story_url not in caption:
-                if len(caption) + len(story_url) + 4 <= 280:
-                    caption = f"{caption}\n\n{story_url}"
-                else:
-                    max_len = 280 - len(story_url) - 7
-                    caption = f"{caption[:max_len]}...\n\n{story_url}"
-
+            # VIDEO posts are pure art - NO URLs, just caption
+            # The video is eye candy, not news delivery
             strategy["content"] = caption
             strategy["video_prompt"] = video_prompt
-            strategy["source_url"] = story_url
-            logger.info(f"Video strategy ready: {caption[:50]}...")
+            # No source_url for video posts - they're art, not news links
+            logger.info(f"Video strategy ready (no URL): {caption[:50]}...")
 
         elif post_type == "image":
             # Generate Image Prompt and Tweet Text with FULL article context
