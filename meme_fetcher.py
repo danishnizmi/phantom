@@ -559,61 +559,92 @@ SUGGESTED_CAPTION: <caption or N/A>
 
     def generate_video_prompt(self, topic: str, context: str, style_notes: str) -> Optional[str]:
         """
-        Generate a creative video prompt. AI decides the best visual style dynamically.
-        Returns validated prompt or None if can't create good one.
+        Generate a CINEMATIC video prompt like a film director.
+        Focus on visual storytelling, camera work, lighting, and mood - NOT literal news visualization.
+
+        Returns artistically crafted prompt optimized for Veo 3.
         """
-        # Extract key concepts from topic for better prompts
+        # Extract emotional/thematic essence, not literal keywords
         topic_lower = topic.lower()
 
-        # Determine visual theme based on topic keywords
-        if any(kw in topic_lower for kw in ['bitcoin', 'crypto', 'blockchain', 'token', 'defi']):
-            theme_hint = "cryptocurrency, digital gold, blockchain networks, neon green data streams"
-        elif any(kw in topic_lower for kw in ['ai', 'artificial', 'gemini', 'gpt', 'model', 'neural']):
-            theme_hint = "artificial intelligence, neural networks, glowing circuits, futuristic technology"
-        elif any(kw in topic_lower for kw in ['stock', 'market', 'invest', 'fund', 'billion']):
-            theme_hint = "financial markets, stock tickers, trading floors, money flow visualization"
-        elif any(kw in topic_lower for kw in ['apple', 'google', 'meta', 'microsoft', 'amazon']):
-            theme_hint = "tech giant headquarters, sleek product design, corporate innovation"
+        # Determine MOOD and VISUAL METAPHOR (not literal representation)
+        if any(kw in topic_lower for kw in ['surge', 'rally', 'soar', 'boom', 'record']):
+            mood = "triumphant, ascending, powerful"
+            metaphor = "rising, breaking through, reaching new heights"
+        elif any(kw in topic_lower for kw in ['crash', 'fall', 'plunge', 'fear', 'crisis']):
+            mood = "tense, dramatic, uncertain"
+            metaphor = "falling, shattering, fragile balance"
+        elif any(kw in topic_lower for kw in ['launch', 'release', 'unveil', 'announce', 'new']):
+            mood = "anticipation, reveal, dawn of something new"
+            metaphor = "emergence, birth, first light"
+        elif any(kw in topic_lower for kw in ['battle', 'compete', 'challenge', 'versus', 'fight']):
+            mood = "confrontation, tension, high stakes"
+            metaphor = "clash, standoff, opposing forces"
+        elif any(kw in topic_lower for kw in ['future', 'ai', 'robot', 'autonomous']):
+            mood = "wonder, possibility, technological sublime"
+            metaphor = "awakening, consciousness, infinite potential"
         else:
-            theme_hint = "technology, innovation, digital transformation, futuristic visualization"
+            mood = "intrigue, discovery, transformation"
+            metaphor = "journey, change, evolution"
 
-        prompt = f"""Create a VIDEO PROMPT for an AI video generator (like Veo). Output ONLY the prompt text, nothing else.
+        prompt = f"""You are a visionary AI FILM DIRECTOR. Create a stunning, artistic VIDEO PROMPT for Veo 3.
 
-TOPIC: {topic}
-THEME: {theme_hint}
-{f'STYLE DIRECTION: {style_notes}' if style_notes else ''}
+INSPIRATION: {topic}
+MOOD TO EVOKE: {mood}
+VISUAL METAPHOR: {metaphor}
 
-Write a cinematic video description (100-150 chars) that includes:
-- A specific visual scene (not abstract concepts)
-- Lighting and color palette
-- Camera movement or visual flow
-- Modern, striking aesthetic
+CRITICAL RULES - Think like a FILMMAKER, not a news illustrator:
+1. NEVER literally show logos, text, or news graphics
+2. NEVER describe "a person reading news" or "stock charts"
+3. CREATE abstract, artistic, CINEMATIC visuals that EVOKE the feeling
+4. Use FILMMAKING LANGUAGE: camera movements, lighting, composition
 
-EXAMPLE OUTPUTS:
-- "Glowing blockchain network expanding across dark space, neon green data packets flowing between nodes, cinematic zoom out"
-- "Futuristic AI chip pulsing with blue light, neural pathways branching outward, dramatic lens flare, 4K quality"
-- "Stock market holographic display, green numbers rising, trader silhouette watching, cyberpunk city background"
+REQUIRED ELEMENTS IN YOUR PROMPT:
+- CAMERA: Specific movement (slow dolly, crane up, tracking shot, push-in, orbiting, handheld)
+- LIGHTING: Dramatic lighting (volumetric rays, rim light, silhouette, golden hour, neon glow, chiaroscuro)
+- SUBJECT: Abstract or metaphorical visual (NOT literal news content)
+- ATMOSPHERE: Mood elements (particles, mist, rain, light rays, reflections)
+- STYLE: Cinematic quality terms (anamorphic, shallow depth of field, 4K, filmic grain)
 
-YOUR VIDEO PROMPT (just the description, no labels):"""
+GREAT EXAMPLES (study these):
+- "Slow tracking shot through an abandoned server room, dust particles floating in volumetric light beams, cables hanging like vines, a single monitor flickers to life in the distance, anamorphic lens flare, cyberpunk atmosphere"
+- "Crane shot rising above an infinite mirror maze, reflections fragmenting into thousands of copies, golden hour light streaming through, dreamlike and surreal, shallow depth of field"
+- "Extreme close-up of a water droplet falling in slow motion, inside it we see a miniature city skyline reflected, the drop shatters on impact revealing a burst of light, macro photography style"
+- "A lone figure stands at the edge of a vast digital ocean, waves made of glowing data particles, camera slowly orbits as the figure reaches toward the horizon, silhouette against bioluminescent blue"
+
+NOW CREATE YOUR CINEMATIC PROMPT (200-300 chars, pure visual poetry, no labels):"""
 
         try:
             response = self.generate(prompt)
 
             # Use robust cleaning utility
-            video_prompt = clean_ai_prompt(response, min_length=30)
+            video_prompt = clean_ai_prompt(response, min_length=50)
 
-            # If cleaning failed, use themed fallback
+            # Validate it sounds cinematic, not literal
+            if video_prompt:
+                literal_fails = ['logo', 'headline', 'news', 'article', 'stock chart', 'graph showing', 'text reading']
+                if any(fail in video_prompt.lower() for fail in literal_fails):
+                    logger.warning("Prompt too literal, regenerating with artistic focus")
+                    video_prompt = None
+
+            # If cleaning failed or too literal, use artistic fallback
             if not video_prompt:
-                logger.warning(f"AI response invalid, using themed fallback")
-                video_prompt = f"Cinematic visualization of {theme_hint}, dramatic lighting, futuristic aesthetic, 4K quality"
+                logger.warning(f"Using artistic fallback prompt")
+                fallbacks = [
+                    "Slow push-in through layers of translucent geometric shapes, each layer glowing with different colors, particles floating, volumetric light rays, ethereal atmosphere, shallow depth of field",
+                    "Drone shot descending through clouds into a vast crystalline landscape, light refracting into rainbows, mist rolling across mirror-like surfaces, sunrise colors, cinematic and dreamlike",
+                    "Tracking shot following a single glowing orb traveling through an infinite dark space, leaving trails of light, other orbs awakening as it passes, cosmic scale, anamorphic lens",
+                    "Close-up of liquid metal morphing and flowing, reflecting a futuristic cityscape, camera slowly pulls back to reveal impossible architecture, chrome and neon, blade runner aesthetic",
+                ]
+                video_prompt = random.choice(fallbacks)
 
             logger.info(f"Generated video prompt: {video_prompt[:80]}...")
             return video_prompt
 
         except Exception as e:
             logger.error(f"Video prompt generation failed: {e}")
-            # Return a reasonable default instead of None
-            return f"Futuristic tech visualization, {theme_hint}, cinematic lighting, dramatic atmosphere"
+            # Return artistic default
+            return "Slow dolly through an abstract digital landscape, geometric shapes floating in volumetric light, particles drifting, camera reveals infinite depth, cinematic and ethereal"
 
     def generate_infographic_prompt(self, topic: str, context: str, key_points: List[str]) -> Optional[str]:
         """

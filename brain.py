@@ -1757,14 +1757,18 @@ Does it relate to actual topic "{topic}"? Are all claims real?
                 )
                 logger.info(f"Video prompt ready: {video_prompt[:80]}...")
             else:
-                # No researcher - generate topic-based prompt
-                topic_lower = topic.lower()
-                if any(kw in topic_lower for kw in ['bitcoin', 'crypto', 'blockchain', 'token']):
-                    video_prompt = f"Glowing blockchain network, neon green data streams, cryptocurrency visualization, cinematic, 4K"
-                elif any(kw in topic_lower for kw in ['ai', 'artificial', 'gemini', 'gpt']):
-                    video_prompt = f"Futuristic AI neural network, glowing circuits, data processing visualization, cinematic lighting"
-                else:
-                    video_prompt = f"Futuristic tech visualization about {topic[:40]}, neon lights, data streams, cinematic 4K"
+                # No researcher - use cinematic artistic fallbacks (NOT literal news visuals)
+                import random
+                cinematic_fallbacks = [
+                    "Slow push-in through layers of translucent geometric shapes, each layer glowing with different colors, particles floating in volumetric light rays, ethereal atmosphere, shallow depth of field, anamorphic",
+                    "Drone shot descending through clouds into a vast crystalline landscape, light refracting into rainbows, mist rolling across mirror-like surfaces, sunrise colors, cinematic and dreamlike",
+                    "Tracking shot following a single glowing orb traveling through infinite dark space, leaving trails of light, other orbs awakening as it passes, cosmic scale, anamorphic lens flare",
+                    "Close-up of liquid metal morphing and flowing, reflecting impossible architecture, camera slowly pulls back to reveal futuristic cityscape, chrome and neon, blade runner aesthetic",
+                    "Extreme slow motion of glass shattering into a thousand fragments, each piece catching light differently, camera orbits through the frozen explosion, dramatic rim lighting",
+                    "A lone silhouette stands at the edge of a vast digital ocean, waves made of glowing particles, camera slowly orbits as figure reaches toward the horizon, bioluminescent blue",
+                ]
+                video_prompt = random.choice(cinematic_fallbacks)
+                logger.info(f"Using cinematic fallback prompt")
 
         if post_type == "video":
 
