@@ -639,7 +639,7 @@ class AgentBrain:
 
         Daily limits (to control Vertex AI costs):
         - VIDEO: 1 per day max ($0.50+ each)
-        - IMAGE/INFOGRAPHIC/MEME: 5 per day combined ($0.01-0.05 each)
+        - IMAGE/INFOGRAPHIC/MEME: 2 per day in BUDGET_MODE, 5 per day normal ($0.01-0.05 each)
         """
         usage = self._get_daily_media_usage()
 
@@ -649,12 +649,14 @@ class AgentBrain:
                 return (False, 'text', f"Video budget exhausted ({usage['video']}/1 today)")
             return (True, 'video', f"Video OK ({usage['video']}/1 today)")
 
-        # Image types limit: 5 per day combined (increased from 3)
+        # Image types limit: budget-aware
         image_count = usage.get('image', 0) + usage.get('infographic', 0) + usage.get('meme', 0)
-        if image_count >= 5:
-            return (False, 'text', f"Image budget exhausted ({image_count}/5 today)")
+        image_limit = 2 if Config.BUDGET_MODE else 5
 
-        return (True, desired_type, f"Image budget OK ({image_count}/5 today)")
+        if image_count >= image_limit:
+            return (False, 'text', f"Image budget exhausted ({image_count}/{image_limit} today)")
+
+        return (True, desired_type, f"Image budget OK ({image_count}/{image_limit} today)")
 
     def _get_ai_context_summary(self) -> str:
         """
@@ -702,9 +704,10 @@ class AgentBrain:
             time_str = now.strftime('%H:%M %Z (%A)')
             posts_today = sum(today_counts.values())
 
-            # Calculate what's available
+            # Calculate what's available (budget-aware)
             video_left = max(0, 1 - today_counts['video'])
-            images_left = max(0, 5 - (today_counts['image'] + today_counts['infographic'] + today_counts['meme']))
+            image_limit = 2 if Config.BUDGET_MODE else 5
+            images_left = max(0, image_limit - (today_counts['image'] + today_counts['infographic'] + today_counts['meme']))
 
             # Detect patterns
             patterns = []
@@ -1683,15 +1686,36 @@ Does it relate to actual topic "{topic}"? Are all claims real?
             post_type = "video"
             research_result = {'format': 'VIDEO', 'style_notes': '', 'reasoning': 'FORCE_VIDEO override'}
         elif Config.BUDGET_MODE:
-            # STRICT BUDGET MODE: Only allow 1 video/day OR text (no images/infographics/memes)
-            if video_count >= 1:
-                logger.info(f"💰 BUDGET_MODE: Video quota used ({video_count}/1 today), using text")
+            # SMART BUDGET MODE: Max 1 video/day + 2 images/memes per day, AI decides within limits
+            if video_count >= 1 and image_count >= 2:
+                # Both budgets exhausted - text only
+                logger.info(f"💰 BUDGET_MODE: All media quota used (video:{video_count}/1, images:{image_count}/2), using text")
                 post_type = "text"
-                research_result = {'format': 'TEXT', 'style_notes': '', 'reasoning': 'Budget mode - video quota used'}
+                research_result = {'format': 'TEXT', 'style_notes': '', 'reasoning': 'Budget mode - all media quota used'}
             else:
-                logger.info(f"💰 BUDGET_MODE: Generating daily video ({video_count}/1 today)")
-                post_type = "video"
-                research_result = {'format': 'VIDEO', 'style_notes': '', 'reasoning': 'Budget mode - daily video'}
+                # Let AI decide from available formats
+                should_ensure_video = self._should_ensure_daily_video(video_count)
+
+                if should_ensure_video and video_count == 0:
+                    # Prioritize video to ensure 1/day
+                    logger.info(f"💰 BUDGET_MODE: Ensuring daily video ({video_count}/1 today)")
+                    post_type = "video"
+                    research_result = {'format': 'VIDEO', 'style_notes': '', 'reasoning': 'Budget mode - daily video priority'}
+                else:
+                    # AI decides from available budget
+                    raw_hint = ai_eval.get('format_hint', 'TEXT').upper()
+                    format_hint = raw_hint.split()[0] if raw_hint else 'TEXT'
+
+                    # Check if AI's choice fits budget
+                    if format_hint == 'VIDEO' and video_count >= 1:
+                        logger.info(f"💰 AI chose VIDEO but quota used ({video_count}/1), fallback to image/text")
+                        format_hint = 'MEME' if image_count < 2 else 'TEXT'
+                    elif format_hint in ['MEME', 'INFOGRAPHIC'] and image_count >= 2:
+                        logger.info(f"💰 AI chose {format_hint} but image quota used ({image_count}/2), using TEXT")
+                        format_hint = 'TEXT'
+
+                    post_type = format_hint.lower() if format_hint in ['VIDEO', 'MEME', 'INFOGRAPHIC', 'TEXT'] else 'text'
+                    research_result = {'format': format_hint, 'style_notes': ai_eval.get('style_tip', ''), 'reasoning': f'Budget mode - AI chose {format_hint}'}
         elif image_count >= 5 and video_count >= 1:
             # No media budget at all - skip research API call
             logger.info(f"💰 Media budget exhausted - using text (saved API call)")

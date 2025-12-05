@@ -29,7 +29,7 @@ variable "timezone" {
 }
 
 variable "budget_mode" {
-  description = "Enable strict budget mode: 1 post/day, max 1 video/day, no images/infographics"
+  description = "Enable smart budget mode: max 1 video/day + 2 images/memes/day, AI decides format"
   type        = bool
   default     = true
 }
@@ -47,27 +47,31 @@ variable "job_name" {
 }
 
 # Scheduler configuration - AWST times
-# STRICT BUDGET MODE: 1 trigger per day to hit $30 AUD/month target
-# Single daily post at peak engagement time (evening)
+# OPTIMIZED: 5 triggers per day for variety (video, memes, AI decides)
+# Spread across peak engagement windows
 variable "scheduler_triggers" {
   description = "Cron expressions for Cloud Scheduler triggers (in configured timezone)"
   type        = list(string)
   default = [
-    "0 18 * * *",   # 6:00 PM AWST - Peak evening engagement (1 post/day: video OR text)
+    "30 10 * * *",  # 10:30 AM AWST - Late morning
+    "45 14 * * *",  # 2:45 PM AWST - Afternoon
+    "0 18 * * *",   # 6:00 PM AWST - Peak evening (prioritize video)
+    "30 20 * * *",  # 8:30 PM AWST - Evening engagement
+    "15 22 * * *",  # 10:15 PM AWST - Night scrolling
   ]
 }
 
-# Resource limits
+# Resource limits (optimized for budget)
 variable "cpu_limit" {
   description = "CPU limit for Cloud Run Job"
   type        = string
-  default     = "1"
+  default     = "1"  # Keep at 1 for video generation (needs compute)
 }
 
 variable "memory_limit" {
   description = "Memory limit for Cloud Run Job"
   type        = string
-  default     = "1Gi"
+  default     = "1Gi"  # Keep at 1Gi for video processing
 }
 
 variable "timeout_seconds" {

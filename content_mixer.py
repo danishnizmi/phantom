@@ -100,16 +100,16 @@ class ContentMixer:
                 for key in matching_keys:
                     weights[key] = weights[key] * 1.5
 
-        # 4. STRICT BUDGET MODE: Only allow text (video is handled separately in brain.py)
-        # Disable all expensive media generation in mixer
+        # 4. SMART BUDGET MODE: Reduce expensive media, keep memes and infographics available
+        # Video is handled separately in brain.py with daily limits
         from config import Config
         if Config.BUDGET_MODE:
-            weights['news_video'] = 0
-            weights['youtube_explainer'] = 0
-            weights['infographic'] = 0
-            weights['meme'] = 0
-            # Only text is allowed in budget mode
-            logger.info("💰 BUDGET_MODE: Content mixer restricted to text only")
+            weights['news_video'] = 0  # Video handled by brain.py, not mixer
+            weights['youtube_explainer'] = 0  # Expensive, disable
+            # Keep memes and infographics but reduce weight (budget mode allows 2/day total)
+            weights['meme'] = max(5, weights.get('meme', 10) * 0.7)
+            weights['infographic'] = max(5, weights.get('infographic', 15) * 0.5)
+            logger.info("💰 BUDGET_MODE: Reduced media weights, AI decides within limits")
 
         # 5. Reduce infographic/youtube if fetchers not available
         if not self.youtube_fetcher:
